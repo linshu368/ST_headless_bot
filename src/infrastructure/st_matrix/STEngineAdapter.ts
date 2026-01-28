@@ -1,0 +1,523 @@
+// @ts-ignore
+import CoreFactory from './CoreFactory.cjs';
+// @ts-ignore
+import { createVirtualContext } from './VirtualContext.js';
+import { ISTEngine, STContextData, ISTNetworkHandler } from '../../core/ports/ISTEngine.js';
+
+// Map DOM IDs to Config Keys
+export const DOM_ID_MAP: Record<string, string> = {
+    '#main_api': 'main_api',
+    '#api_key_openai': 'api_key_openai',
+    '#api_url_openai': 'api_url_openai',
+    '#model_openai_select': 'openai_model',
+    '#send_textarea': 'send_textarea',
+    // 关键 Prompt 设置映射
+    '#preset_settings_openai': 'preset_settings_openai',
+    '#context_template': 'context_template',
+    '#system_prompt': 'system_prompt',
+    '#jailbreak_prompt': 'jailbreak_prompt',
+    // 更多可能需要的映射
+    '#temp_openai': 'openai_temperature',
+    '#max_context_openai': 'openai_max_context',
+    '#max_tokens_openai': 'openai_max_tokens',
+};
+
+export interface UserConfig {
+    [key: string]: any;
+}
+
+/**
+ * Adapter for the SillyTavern Core Engine
+ * Implements the ISTEngine interface
+ */
+export class STEngineAdapter implements ISTEngine {
+    private userConfig: UserConfig;
+    private networkHandler: ISTNetworkHandler;
+    private instance: any = null;
+    private connectAttemptInProgress = false;
+    private hasConnected = false;
+    private lastSyncedMainApi: string | null = null;
+
+    constructor(userConfig: UserConfig, networkHandler: ISTNetworkHandler) {
+        this.userConfig = userConfig; // Reference to Layer 2 Config
+        this.networkHandler = networkHandler; // Injected Network Handler
+    }
+
+    /**
+     * Initialize the CoreFactory with a Virtual Context
+     */
+    async initialize(): Promise<void> {
+        console.log('[STEngine] Initializing Virtual Context...');
+        
+        const context = createVirtualContext({
+            configProvider: (selector: string) => this._resolveConfigValue(selector),
+            configUpdater: (selector: string, value: any) => this._updateConfigValue(selector, value),
+            fetchImplementation: this.networkHandler
+        });
+
+        // Initialize Core
+        this.instance = CoreFactory(context);
+        
+        // Post-Init Fixes
+        this._applyPatches();
+
+        // Inject initial config into window globals immediately
+        // ST often reads these globals directly instead of querying the DOM
+        Object.keys(this.userConfig).forEach(key => {
+            this.instance.window[key] = this.userConfig[key];
+        });
+
+        // Ensure main_api is synced into ST's internal state
+        this._syncMainApi();
+
+        // Initial state sync
+        // Note: ST might call /api/characters/all automatically on init.
+        if (this.instance.window.setOnlineStatus && !this.instance.window.online_status) {
+            this.instance.window.setOnlineStatus('no_connection'); // Start offline if unset
+        }
+
+        // Ensure connection attempt happens after ST finishes binding handlers.
+        // This prevents a "lost click" before onConnectButtonClick is registered.
+        await this._ensureConnected();
+        
+        console.log('[STEngine] Core Initialized.');
+    }
+
+    private _resolveConfigValue(selector: string): any {
+        const key = DOM_ID_MAP[selector];
+        if (!key) return '';
+
+        // 1. Try top-level config
+        if (this.userConfig[key] !== undefined) {
+            return this.userConfig[key];
+        }
+
+        // 2. Try nested oai_settings (Common for OpenAI params)
+        if (this.userConfig.oai_settings && this.userConfig.oai_settings[key] !== undefined) {
+            return this.userConfig.oai_settings[key];
+        }
+
+        // 3. Fallback: Check window globals
+        // This is important for things like 'main_api' if ST tries to read them from DOM but we want to supply them via config
+        if (this.instance && this.instance.window[key] !== undefined) {
+             return this.instance.window[key];
+        }
+        return ''; // Default empty string
+    }
+
+    private _updateConfigValue(selector: string, value: any): void {
+        const key = DOM_ID_MAP[selector];
+        if (key) {
+            this.userConfig[key] = value;
+            // Also update the window global if it exists, as ST often mirrors DOM to globals
+            if (this.instance && this.instance.window) {
+                this.instance.window[key] = value;
+            }
+        }
+    }
+
+    private _applyPatches(): void {
+        const win = this.instance.window;
+        
+        // 1. Stub UI Functions (The Lobotomy)
+        // Prevent ST from trying to render UI or manage tags
+        const noOp = () => {};
+        const functionsToKill = [
+            'printTagFilters',
+            'printCharacters',
+            'printCharactersDebounced',
+            'saveSettings',
+            'saveSettingsDebounced', 
+            'renderChat',
+            'scrollChatToBottom',
+            'showToast',
+            'hideToast',
+            'toastr', // Kill the toastr object itself if possible, or its methods
+        ];
+
+        functionsToKill.forEach(funcName => {
+            if (typeof win[funcName] === 'function') {
+                win[funcName] = noOp;
+            }
+        });
+
+        // Kill toastr methods specifically
+        if (win.toastr) {
+            win.toastr.info = noOp;
+            win.toastr.success = noOp;
+            win.toastr.warning = noOp;
+            win.toastr.error = noOp;
+            win.toastr.clear = noOp;
+        }
+
+        // 2. Runtime State Fixes
+        win.is_send_press = false;
+        
+        // Ensure character list exists
+        if (!win.characters) win.characters = [];
+
+        // Mock the global converter if it's missing (needed for messageFormatting)
+        // Note: The variable 'converter' is used in ST via with(window), so setting it on win should work.
+        // However, if ST defined 'let converter;' in script.js scope (which bundler merged), we can't easily overwrite it if it's not exported.
+        // But messageFormatting usually uses the global one.
+        if (!win.converter) {
+            win.converter = { makeHtml: (s: any) => s };
+        }
+        
+        // Also inject it into the context directly if CoreFactory exposes a setter or if we can hack it
+        // Since we can't easily access the closure scope, we rely on window property access.
+        // If messageFormatting uses a local variable 'converter' that is initialized from window.converter, we might need to trigger that init.
+        if (win.reloadMarkdownProcessor) {
+             win.reloadMarkdownProcessor();
+        }
+    }
+
+    private _syncMainApi(): void {
+        if (!this.instance || !this.instance.window) return;
+        const win = this.instance.window;
+        const mainApi = this.userConfig.main_api;
+        if (!mainApi) return;
+
+        // Update DOM-mapped value
+        if (win.$ && typeof win.$ === 'function') {
+            try {
+                win.$('#main_api').val(mainApi);
+            } catch {
+                // ignore
+            }
+        }
+
+        // Update global and internal state
+        const shouldChangeApi = this.lastSyncedMainApi !== mainApi || win.main_api !== mainApi;
+        win.main_api = mainApi;
+        if (shouldChangeApi && typeof win.changeMainAPI === 'function') {
+            win.changeMainAPI();
+        }
+        this.lastSyncedMainApi = mainApi;
+        // Defer connection attempts to a guarded async flow.
+        this._ensureConnected().catch(() => {
+            // Best-effort: connection retries are handled inside _ensureConnected.
+        });
+    }
+
+    private async _ensureConnected(): Promise<void> {
+        if (this.connectAttemptInProgress) return;
+        if (!this.instance || !this.instance.window) return;
+
+        const win = this.instance.window;
+        if (this.userConfig.main_api !== 'openai') return;
+
+        const currentStatus = win.online_status;
+        if (currentStatus && currentStatus !== 'no_connection') {
+            this.hasConnected = true;
+            return;
+        }
+
+        this.connectAttemptInProgress = true;
+        try {
+            const maxAttempts = 12;
+            const delayMs = 250;
+
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+                const status = win.online_status;
+                if (status && status !== 'no_connection') {
+                    this.hasConnected = true;
+                    return;
+                }
+
+                if (win.$ && typeof win.$ === 'function') {
+                    try {
+                        win.$('#api_button_openai').trigger('click');
+                    } catch {
+                        // ignore
+                    }
+                }
+
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+
+            // Fallback: avoid permanent "no_connection" gate if handlers never bind.
+            if (!this.hasConnected && win.setOnlineStatus) {
+                console.warn('[STEngine] Forcing online status to Connected after retries.');
+                win.setOnlineStatus('Connected');
+                win.online_status = 'Connected';
+            }
+        } finally {
+            this.connectAttemptInProgress = false;
+        }
+    }
+
+    private _ensureOnlineStatus(): void {
+        if (!this.instance || !this.instance.window) return;
+        const win = this.instance.window;
+        if (this.userConfig.main_api !== 'openai') return;
+
+        if (win.setOnlineStatus) {
+            if (!win.online_status || win.online_status === 'no_connection') {
+                win.setOnlineStatus('Connected');
+                win.online_status = 'Connected';
+            }
+        } else if (!win.online_status || win.online_status === 'no_connection') {
+            win.online_status = 'Connected';
+        }
+    }
+
+    /**
+     * Load Context (Character and History)
+     * @param contextData Data to inject
+     */
+    async loadContext(contextData: STContextData): Promise<void> {
+        // Direct Memory Injection (No API calls, no UI refresh)
+        if (!this.instance) throw new Error('STEngine not initialized');
+        const win = this.instance.window;
+
+        // 1. Inject Character
+        if (contextData.characters && contextData.characters.length > 0) {
+            // Normalize character data (Handle V2 Spec -> Runtime Memory Format)
+            const activeChar = contextData.characters[0];
+            
+            // [TRANSFORMATION] SillyTavern Runtime expects V2 fields (system_prompt, etc.) to be inside a 'data' property.
+            // However, exported JSONs usually have them at the top level.
+            // We create a hybrid object that satisfies both V1 (top-level) and V2 (data-nested) access patterns.
+            if (!activeChar.data) {
+                activeChar.data = {
+                    name: activeChar.name,
+                    description: activeChar.description,
+                    personality: activeChar.personality,
+                    scenario: activeChar.scenario,
+                    first_mes: activeChar.first_mes,
+                    mes_example: activeChar.mes_example,
+                    creator_notes: activeChar.creator_notes,
+                    system_prompt: activeChar.system_prompt,
+                    post_history_instructions: activeChar.post_history_instructions,
+                    tags: activeChar.tags,
+                    creator: activeChar.creator,
+                    character_version: activeChar.character_version,
+                    alternate_greetings: activeChar.alternate_greetings,
+                    extensions: activeChar.extensions || {}
+                };
+            }
+
+            // Ensure essential V2 fields are present for ST
+            // ST uses 'description', 'first_mes', 'mes_example', 'scenario', 'personality'
+            // We might need to ensure they are accessible on the object.
+            
+            // MUTATION STRATEGY: Update the existing array instead of replacing it
+            // This preserves the reference held by the local 'characters' variable inside the closure
+            if (win.characters && Array.isArray(win.characters)) {
+                win.characters.length = 0;
+                win.characters.push(activeChar);
+            } else {
+                win.characters = [activeChar];
+            }
+            
+            win.this_chid = 0;
+            
+            // Call internal setter if available to sync state, otherwise direct set
+            if (typeof win.setCharacterId === 'function') {
+                win.setCharacterId(win.this_chid);
+            }
+            
+            // Force-update DOM values if ST relies on reading them from DOM during generation
+            // Some versions of ST might read $('#character_popup_description') etc.
+            // But usually, it reads from the 'characters' array.
+            
+            console.log(`[STEngine] Injected Character: ${activeChar.name}`);
+            console.log(`[STEngine] Debug Character Data (V2 check):`, JSON.stringify(win.characters[0]?.data?.system_prompt ? "Has System Prompt" : "MISSING System Prompt"));
+            console.log(`[STEngine] Debug Character Description:`, JSON.stringify(win.characters[0]?.description ? "Has Description" : "MISSING Description"));
+        }
+
+        // 2. Inject Chat History
+        if (contextData.chat) {
+            // Convert standard OpenAI format (Layer 2) to ST internal format (Layer 3)
+            // if the input appears to be OpenAI format (has 'role' but not 'is_user')
+            const stHistory = contextData.chat.map((msg: any) => {
+                if (msg.role && typeof msg.is_user === 'undefined') {
+                    return this._convertToSTMessage(msg, win.characters[0]?.name || 'Assistant');
+                }
+                return msg;
+            });
+            const lastInjected = stHistory[stHistory.length - 1];
+            console.log('[STEngine] loadContext chat snapshot', {
+                inputLength: contextData.chat.length,
+                stLength: stHistory.length,
+                last: lastInjected ? {
+                    role: lastInjected.role,
+                    is_user: lastInjected.is_user,
+                    is_system: lastInjected.is_system,
+                    name: lastInjected.name,
+                    mes: lastInjected.mes?.slice?.(0, 60),
+                    content: lastInjected.content?.slice?.(0, 60)
+                } : null,
+                tail: this._summarizeChat(stHistory)
+            });
+
+            // Replace the chat array reference or content
+            if (win.chat && Array.isArray(win.chat)) {
+                win.chat.length = 0;
+                stHistory.forEach((msg: any) => win.chat.push(msg));
+            } else {
+                win.chat = stHistory;
+            }
+            console.log('[STEngine] loadContext applied to win.chat', {
+                winLength: win.chat?.length,
+                tail: this._summarizeChat(win.chat || [])
+            });
+            
+            // Ensure 'chat_metadata' exists if ST needs it
+            if (!win.chat_metadata) win.chat_metadata = {};
+            
+            // [WORKAROUND] Inject System Prompt into Chat History
+            // Since PromptManager logic is failing to build the system prompt from settings in the virtual environment,
+            // we inject it directly into the chat history as a system message. 
+            // The 'Empty OpenAI messages' fallback in openai.js will pick this up.
+            if (win.characters[0]) {
+                const char = win.characters[0];
+                const systemPrompt = char.data?.system_prompt || char.description || `You are ${char.name}.`;
+                
+                // Check if system prompt is already at start
+                if (win.chat.length === 0 || !win.chat[0].is_system) {
+                    console.log('[STEngine] Injecting System Prompt into Chat History (Workaround)');
+                    win.chat.unshift({
+                        name: 'System',
+                        is_user: false,
+                        is_system: true,
+                        send_date: this._getHumanizedTime(),
+                        mes: systemPrompt,
+                        force_avatar: ''
+                    });
+                }
+            }
+            
+            console.log(`[STEngine] Injected ${win.chat.length} messages.`);
+        }
+
+        // 3. Set Online Status (Fake it)
+        if (win.setOnlineStatus) {
+            win.setOnlineStatus('Connected');
+        }
+        win.online_status = 'Connected';
+    }
+
+    /**
+     * Helper: Convert OpenAI format to SillyTavern format
+     */
+    private _convertToSTMessage(openAIMsg: any, charName: string): any {
+        const isUser = openAIMsg.role === 'user';
+        return {
+            name: isUser ? 'User' : charName,
+            is_user: isUser,
+            is_name: true,
+            send_date: this._getHumanizedTime(), // ST needs a display string
+            mes: openAIMsg.content,
+            force_avatar: '',
+            // extra metadata if needed
+        };
+    }
+
+    private _getHumanizedTime(): string {
+        return new Date().toLocaleString('en-US', { 
+            hour: 'numeric', minute: 'numeric', hour12: true, 
+            month: 'long', day: 'numeric', year: 'numeric' 
+        });
+    }
+
+    private _summarizeChat(chat: any[], limit = 3) {
+        const tail = chat.slice(-limit);
+        return tail.map((m: any) => ({
+            role: m.role,
+            is_user: m.is_user,
+            is_system: m.is_system,
+            name: m.name,
+            mes: typeof m.mes === 'string' ? m.mes.slice(0, 60) : undefined,
+            content: typeof m.content === 'string' ? m.content.slice(0, 60) : undefined
+        }));
+    }
+
+    /**
+     * Triggers the generation process
+     * @param prompt - The user's input text
+     * @returns The last message generated (ST Message Object)
+     */
+    async generate(prompt: string): Promise<any> {
+        if (!this.instance) throw new Error('STEngine not initialized');
+        
+        // 1. Set Input
+        this.userConfig.send_textarea = prompt;
+        // Also sync to window global for ST to pick it up
+        if (this.instance && this.instance.window) {
+            this.instance.window.send_textarea = prompt;
+            // ST often uses jQuery val() to get input, which our VirtualContext routes to configProvider
+            // But just in case it reads the global directly or via some other mechanism:
+             // Ensure the 'main_api' is set correctly before generation
+            if (this.userConfig.main_api) {
+                this.instance.window.main_api = this.userConfig.main_api;
+            }
+        }
+
+        // Ensure main_api is synced before generation
+        this._syncMainApi();
+
+        // Ensure the internal online_status is not blocking Generate.
+        this._ensureOnlineStatus();
+        
+        // 2. Call Generate
+        console.log('[STEngine] Calling Generate...');
+        const win = this.instance.window;
+        
+        // [DEBUG] Check Character Selection State before generation
+        console.log(`[STEngine] Pre-Generate Check - this_chid: ${win.this_chid}`);
+        console.log(`[STEngine] Pre-Generate Check - characters[0] exists: ${!!win.characters?.[0]}`);
+        console.log(`[STEngine] Pre-Generate Check - oai_settings keys: ${Object.keys(win.oai_settings || {}).join(', ')}`);
+        console.log(`[STEngine] Pre-Generate Check - oai_settings.prompts length: ${win.oai_settings?.prompts?.length}`);
+        console.log('[STEngine] Pre-Generate oai_settings ref check', {
+            sameRef: win.oai_settings === this.userConfig.oai_settings,
+            windowKeys: Object.keys(win.oai_settings || {}),
+            userKeys: Object.keys(this.userConfig.oai_settings || {})
+        });
+        
+        // Ensure character is selected if not already (Double Tap)
+        if (typeof win.selectCharacterById === 'function' && win.this_chid !== 0) {
+             console.log('[STEngine] Force-calling selectCharacterById(0)...');
+             await win.selectCharacterById(0);
+        }
+
+        // Capture the chat length before generation to detect new messages
+        const initialChatLength = win.chat ? win.chat.length : 0;
+        console.log('[STEngine] Pre-Generate chat snapshot', {
+            length: initialChatLength,
+            tail: this._summarizeChat(win.chat || [])
+        });
+
+        try {
+            await win.Generate('normal');
+        } catch (e: any) {
+            // ST sometimes throws "Cannot read properties of undefined (reading 'prompt')" at the very end 
+            // because generate_data global is cleared or not set correctly in our mock env.
+            // But usually the request has already been sent.
+            if (e.message && e.message.includes("reading 'prompt'")) {
+                console.warn('[STEngine] Suppressing expected error:', e.message);
+            } else {
+                throw e;
+            }
+        }
+        
+        // 3. Return the last message
+        // In ST, the last message in the chat array is the one just generated (or the one being streamed)
+        // Note: For streaming, we might need to wait or hook into the stream.
+        // For MVP (non-streaming or pseudo-streaming), we assume Generate() completes when the promise resolves.
+        // However, ST's Generate is async but might return before the stream is done if not awaited properly in our mock.
+        // Assuming our FetchInterceptor awaits the full response, ST should have updated the chat array.
+        
+        if (win.chat && win.chat.length > initialChatLength) {
+            console.log('[STEngine] Post-Generate chat snapshot', {
+                length: win.chat.length,
+                tail: this._summarizeChat(win.chat)
+            });
+            const lastMsg = win.chat[win.chat.length - 1];
+            return lastMsg;
+        }
+        
+        return null; 
+    }
+}
