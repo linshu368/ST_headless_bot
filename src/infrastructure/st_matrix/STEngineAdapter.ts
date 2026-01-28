@@ -434,12 +434,121 @@ export class STEngineAdapter implements ISTEngine {
         }));
     }
 
+    private _createAsyncQueue<T>() {
+        const queue: T[] = [];
+        let pendingResolve: ((value: IteratorResult<T>) => void) | null = null;
+        let pendingReject: ((reason?: any) => void) | null = null;
+        let isClosed = false;
+
+        const push = (item: T) => {
+            if (isClosed) return;
+            if (pendingResolve) {
+                pendingResolve({ value: item, done: false });
+                pendingResolve = null;
+                pendingReject = null;
+            } else {
+                queue.push(item);
+            }
+        };
+
+        const close = () => {
+            if (isClosed) return;
+            isClosed = true;
+            if (pendingResolve) {
+                pendingResolve({ value: undefined as T, done: true });
+                pendingResolve = null;
+                pendingReject = null;
+            }
+        };
+
+        const error = (err: Error) => {
+            if (isClosed) return;
+            isClosed = true;
+            if (pendingReject) {
+                pendingReject(err);
+                pendingResolve = null;
+                pendingReject = null;
+            }
+        };
+
+        const iterator = {
+            [Symbol.asyncIterator](): AsyncIterator<T> {
+                return {
+                    next: (): Promise<IteratorResult<T>> => {
+                        if (queue.length > 0) {
+                            const value = queue.shift() as T;
+                            return Promise.resolve({ value, done: false });
+                        }
+                        if (isClosed) {
+                            return Promise.resolve({ value: undefined as T, done: true });
+                        }
+                        return new Promise<IteratorResult<T>>((resolve, reject) => {
+                            pendingResolve = resolve;
+                            pendingReject = reject;
+                        });
+                    }
+                };
+            }
+        };
+
+        return { iterator, push, close, error };
+    }
+
     /**
      * Triggers the generation process
      * @param prompt - The user's input text
      * @returns The last message generated (ST Message Object)
      */
     async generate(prompt: string): Promise<any> {
+        return this._runGeneration(prompt);
+    }
+
+    generateStream(prompt: string): AsyncIterable<string> {
+        if (!this.networkHandler.setStreamMode || !this.networkHandler.setStreamSink) {
+            throw new Error('Network handler does not support streaming.');
+        }
+
+        const streamQueue = this._createAsyncQueue<string>();
+        this.networkHandler.setStreamMode(true);
+        this.networkHandler.setStreamSink({
+            onDelta: (text: string) => streamQueue.push(text),
+            onComplete: () => streamQueue.close(),
+            onError: (error: Error) => streamQueue.error(error),
+        });
+
+        const generationPromise = this._runGeneration(prompt).catch((error) => {
+            streamQueue.error(error instanceof Error ? error : new Error(String(error)));
+            throw error;
+        });
+
+        const cleanup = async () => {
+            this.networkHandler.setStreamMode?.(false);
+            this.networkHandler.setStreamSink?.(null);
+            try {
+                await generationPromise;
+            } catch {
+                // generation errors are surfaced via stream iterator
+            }
+        };
+
+        const iterator = {
+            [Symbol.asyncIterator]: () => streamQueue.iterator[Symbol.asyncIterator]()
+        };
+
+        const wrappedIterator = async function* () {
+            try {
+                for await (const delta of iterator as AsyncIterable<string>) {
+                    yield delta;
+                }
+            } finally {
+                await cleanup();
+            }
+        };
+
+        return wrappedIterator();
+    }
+
+    private async _runGeneration(prompt: string): Promise<any> {
         if (!this.instance) throw new Error('STEngine not initialized');
         
         // 1. Set Input

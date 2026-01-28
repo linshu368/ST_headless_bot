@@ -1,4 +1,8 @@
 import { SessionManager, type OpenAIMessage } from '../../session/usecases/SessionManager.js';
+import {
+    applyStreamChar,
+    createInitialStreamScheduleState,
+} from '../rules/streamingSchedule.js';
 
 /**
  * Layer 2 Usecase: 处理用户消息
@@ -104,6 +108,120 @@ export class SimpleChat {
         } else {
             console.error('[SimpleChat] Generation returned empty');
             return "收到空回复...";
+        }
+    }
+
+    /**
+     * 处理用户消息的流式入口
+     * @param userId Telegram 用户ID
+     * @param userInput 用户输入的文本
+     * @returns 流式增量文本
+     */
+    async *streamChat(userId: string, userInput: string): AsyncGenerator<{
+        text: string;
+        isFirst: boolean;
+        isFinal: boolean;
+        firstResponseMs?: number;
+    }> {
+        console.log(`[SimpleChat] Streaming for user: ${userId}`);
+
+        const session = await this.sessionManager.getOrCreateSession(userId);
+
+        const previewHistory = (history: OpenAIMessage[], limit = 3) => {
+            const tail = history.slice(-limit);
+            return tail.map((m) => ({
+                role: m.role,
+                content: typeof m.content === 'string' ? m.content.slice(0, 60) : String(m.content),
+            }));
+        };
+
+        const lastBeforeInject = session.history[session.history.length - 1];
+        const lastIsSameUserInput =
+            lastBeforeInject?.role === 'user' && lastBeforeInject?.content === userInput;
+        console.log('[SimpleChat] Pre-inject history snapshot (no user push yet)', {
+            length: session.history.length,
+            last: lastBeforeInject ? { role: lastBeforeInject.role, content: lastBeforeInject.content?.slice(0, 60) } : null,
+            lastIsSameUserInput,
+            tail: previewHistory(session.history),
+        });
+
+        const historySnapshot = JSON.parse(JSON.stringify(session.history));
+        console.log('[SimpleChat] Injecting history into engine', {
+            length: historySnapshot.length,
+            tail: previewHistory(historySnapshot),
+        });
+
+        await session.engine.loadContext({
+            characters: [session.character],
+            chat: historySnapshot
+        });
+
+        const startedAtMs = Date.now();
+        let firstResponseMs: number | undefined;
+        let accumulatedText = '';
+        let lastSentText = '';
+        let scheduleState = createInitialStreamScheduleState();
+
+        try {
+            const stream = session.engine.generateStream(userInput);
+
+            for await (const chunk of stream) {
+                if (!chunk) continue;
+
+                for (const ch of chunk) {
+                    accumulatedText += ch;
+                    const nowMs = Date.now();
+                    const { nextState, decision } = applyStreamChar(scheduleState, nowMs);
+                    scheduleState = nextState;
+
+                    if (decision?.shouldUpdate && accumulatedText !== lastSentText) {
+                        if (decision.isFirstUpdate && firstResponseMs === undefined) {
+                            firstResponseMs = nowMs - startedAtMs;
+                        }
+
+                        lastSentText = accumulatedText;
+                        yield {
+                            text: accumulatedText,
+                            isFirst: decision.isFirstUpdate,
+                            isFinal: false,
+                            firstResponseMs
+                        };
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[SimpleChat] Streaming generation failed:', error);
+            throw error;
+        }
+
+        if (accumulatedText && accumulatedText !== lastSentText) {
+            yield {
+                text: accumulatedText,
+                isFirst: false,
+                isFinal: true,
+                firstResponseMs
+            };
+            lastSentText = accumulatedText;
+        } else if (accumulatedText) {
+            yield {
+                text: accumulatedText,
+                isFirst: false,
+                isFinal: true,
+                firstResponseMs
+            };
+        }
+
+        if (accumulatedText) {
+            session.history.push({
+                role: 'user',
+                content: userInput
+            });
+            session.history.push({
+                role: 'assistant',
+                content: accumulatedText
+            });
+        } else {
+            console.error('[SimpleChat] Streaming returned empty');
         }
     }
 

@@ -82,7 +82,10 @@ export class TelegramBotAdapter {
         if (this.processedMessageIds.size > this.MAX_PROCESSED_IDS) {
             const iterator = this.processedMessageIds.values();
             for (let i = 0; i < 100; i++) {
-                this.processedMessageIds.delete(iterator.next().value);
+                const nextValue = iterator.next().value;
+                if (nextValue !== undefined) {
+                    this.processedMessageIds.delete(nextValue);
+                }
             }
         }
 
@@ -101,11 +104,29 @@ export class TelegramBotAdapter {
             // 发送 "typing" 状态，提升用户体验
             this.bot.sendChatAction(msg.chat.id, 'typing');
 
-            // 调用 Layer 2 UseCase
-            const reply = await this.simpleChat.chat(chatId, text);
+            const placeholder = await this.bot.sendMessage(msg.chat.id, '✍️输入中...');
+            let lastText = '';
 
-            // 发送回复
-            await this.bot.sendMessage(msg.chat.id, reply);
+            for await (const update of this.simpleChat.streamChat(chatId, text)) {
+                if (!update.text || update.text === lastText) continue;
+
+                if (update.isFirst && update.firstResponseMs !== undefined) {
+                    console.log(`[TelegramBot] First response in ${update.firstResponseMs}ms`);
+                }
+
+                await this.bot.editMessageText(update.text, {
+                    chat_id: msg.chat.id,
+                    message_id: placeholder.message_id
+                });
+                lastText = update.text;
+            }
+
+            if (!lastText) {
+                await this.bot.editMessageText("收到空回复...", {
+                    chat_id: msg.chat.id,
+                    message_id: placeholder.message_id
+                });
+            }
 
         } catch (error) {
             console.error(`[TelegramBot] Error handling message for ${chatId}:`, error);

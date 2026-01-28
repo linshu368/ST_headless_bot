@@ -19,6 +19,14 @@ export interface MockState {
 export interface FetchInterceptor extends Function {
     (url: string | URL | Request, options?: any): Promise<Response | any>;
     setMockData: (data: Partial<MockState>) => void;
+    setStreamMode?: (enabled: boolean) => void;
+    setStreamSink?: (sink: StreamSink | null) => void;
+}
+
+export interface StreamSink {
+    onDelta: (text: string) => void;
+    onComplete: () => void;
+    onError: (error: Error) => void;
 }
 
 /**
@@ -37,6 +45,8 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     };
     const mockSecrets: Record<string, string> = {};
     let mockSecretIdCounter = 0;
+    let streamModeEnabled = false;
+    let streamSink: StreamSink | null = null;
 
     const interceptor = (async (url: string | URL | Request, options: any = {}): Promise<Response | any> => {
         const urlStr = url.toString();
@@ -218,6 +228,10 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                     }
                 }
     
+                if (streamModeEnabled) {
+                    requestBody.stream = true;
+                }
+
                 const bodyStr = JSON.stringify(requestBody);
                 
                 // Real Request to LLM
@@ -230,15 +244,27 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 });
 
                 if (!response.ok) {
-                     const errText = await response.text();
-                     console.error('[Network] LLM Error:', errText);
-                     return {
-                         ok: false,
-                         status: response.status,
-                         statusText: response.statusText,
-                         text: async () => errText,
-                         json: async () => { try { return JSON.parse(errText) } catch(e) { return {error: errText} } }
-                     };
+                    const errText = await response.text();
+                    console.error('[Network] LLM Error:', errText);
+                    if (streamSink) {
+                        streamSink.onError(new Error(errText));
+                    }
+                    return {
+                        ok: false,
+                        status: response.status,
+                        statusText: response.statusText,
+                        text: async () => errText,
+                        json: async () => { try { return JSON.parse(errText) } catch(e) { return {error: errText} } }
+                    };
+                }
+
+                if (streamModeEnabled) {
+                    const fullText = await parseOpenAIStream(response, streamSink);
+                    const responseBody = buildChatCompletionResponse(fullText, requestBody.model || model);
+                    return new Response(JSON.stringify(responseBody), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
                 }
 
                 // Return the real response stream directly
@@ -246,6 +272,9 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     
             } catch (err: any) {
                 console.error('[Network] Chat Generation Proxy Failed:', err);
+                if (streamSink) {
+                    streamSink.onError(err instanceof Error ? err : new Error(String(err)));
+                }
                 return {
                     ok: false,
                     status: 500,
@@ -329,6 +358,95 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
         if (data.chats) mockState.chats = data.chats;
     };
 
+    interceptor.setStreamMode = (enabled: boolean) => {
+        streamModeEnabled = enabled;
+    };
+
+    interceptor.setStreamSink = (sink: StreamSink | null) => {
+        streamSink = sink;
+    };
+
     return interceptor;
 };
+
+const parseOpenAIStream = async (response: Response, sink: StreamSink | null): Promise<string> => {
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let fullText = '';
+
+    try {
+        const body = response.body;
+        if (!body) {
+            sink?.onComplete();
+            return fullText;
+        }
+
+        for await (const chunk of body as any) {
+            buffer += decoder.decode(chunk, { stream: true });
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith('data:')) continue;
+                const data = trimmed.slice(5).trim();
+                if (!data) continue;
+                if (data === '[DONE]') {
+                    sink?.onComplete();
+                    return fullText;
+                }
+                try {
+                    const payload = JSON.parse(data);
+                    const delta = payload?.choices?.[0]?.delta?.content;
+                    if (typeof delta === 'string' && delta.length > 0) {
+                        fullText += delta;
+                        sink?.onDelta(delta);
+                    }
+                } catch (e) {
+                    console.warn('[Network] Failed to parse stream chunk', e);
+                }
+            }
+        }
+
+        if (buffer.trim().length > 0 && buffer.trim().startsWith('data:')) {
+            const data = buffer.trim().slice(5).trim();
+            if (data && data !== '[DONE]') {
+                try {
+                    const payload = JSON.parse(data);
+                    const delta = payload?.choices?.[0]?.delta?.content;
+                    if (typeof delta === 'string' && delta.length > 0) {
+                        fullText += delta;
+                        sink?.onDelta(delta);
+                    }
+                } catch (e) {
+                    console.warn('[Network] Failed to parse stream tail', e);
+                }
+            }
+        }
+
+        sink?.onComplete();
+        return fullText;
+    } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        sink?.onError(err);
+        throw err;
+    }
+};
+
+const buildChatCompletionResponse = (content: string, model?: string) => ({
+    id: `chatcmpl-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: model || 'unknown',
+    choices: [
+        {
+            index: 0,
+            message: {
+                role: 'assistant',
+                content
+            },
+            finish_reason: 'stop'
+        }
+    ]
+});
 
