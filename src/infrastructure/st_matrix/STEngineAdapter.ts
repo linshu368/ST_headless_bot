@@ -3,6 +3,9 @@ import CoreFactory from './CoreFactory.cjs';
 // @ts-ignore
 import { createVirtualContext } from './VirtualContext.js';
 import { ISTEngine, STContextData, ISTNetworkHandler } from '../../core/ports/ISTEngine.js';
+import { logger } from '../../platform/logger.js';
+
+const COMPONENT = 'STEngine';
 
 // Map DOM IDs to Config Keys
 export const DOM_ID_MAP: Record<string, string> = {
@@ -47,7 +50,7 @@ export class STEngineAdapter implements ISTEngine {
      * Initialize the CoreFactory with a Virtual Context
      */
     async initialize(): Promise<void> {
-        console.log('[STEngine] Initializing Virtual Context...');
+        logger.info({ kind: 'sys', component: COMPONENT, message: 'Initializing Virtual Context' });
         
         const context = createVirtualContext({
             configProvider: (selector: string) => this._resolveConfigValue(selector),
@@ -80,7 +83,7 @@ export class STEngineAdapter implements ISTEngine {
         // This prevents a "lost click" before onConnectButtonClick is registered.
         await this._ensureConnected();
         
-        console.log('[STEngine] Core Initialized.');
+        logger.info({ kind: 'sys', component: COMPONENT, message: 'Core initialized' });
     }
 
     private _resolveConfigValue(selector: string): any {
@@ -238,7 +241,7 @@ export class STEngineAdapter implements ISTEngine {
 
             // Fallback: avoid permanent "no_connection" gate if handlers never bind.
             if (!this.hasConnected && win.setOnlineStatus) {
-                console.warn('[STEngine] Forcing online status to Connected after retries.');
+                logger.warn({ kind: 'sys', component: COMPONENT, message: 'Forcing online status after retries' });
                 win.setOnlineStatus('Connected');
                 win.online_status = 'Connected';
             }
@@ -318,13 +321,16 @@ export class STEngineAdapter implements ISTEngine {
                 win.setCharacterId(win.this_chid);
             }
             
-            // Force-update DOM values if ST relies on reading them from DOM during generation
-            // Some versions of ST might read $('#character_popup_description') etc.
-            // But usually, it reads from the 'characters' array.
-            
-            console.log(`[STEngine] Injected Character: ${activeChar.name}`);
-            console.log(`[STEngine] Debug Character Data (V2 check):`, JSON.stringify(win.characters[0]?.data?.system_prompt ? "Has System Prompt" : "MISSING System Prompt"));
-            console.log(`[STEngine] Debug Character Description:`, JSON.stringify(win.characters[0]?.description ? "Has Description" : "MISSING Description"));
+            logger.debug({ 
+                kind: 'sys', 
+                component: COMPONENT, 
+                message: 'Character injected', 
+                meta: { 
+                    name: activeChar.name,
+                    hasSystemPrompt: !!win.characters[0]?.data?.system_prompt,
+                    hasDescription: !!win.characters[0]?.description
+                } 
+            });
         }
 
         // 2. Inject Chat History
@@ -337,19 +343,16 @@ export class STEngineAdapter implements ISTEngine {
                 }
                 return msg;
             });
-            const lastInjected = stHistory[stHistory.length - 1];
-            console.log('[STEngine] loadContext chat snapshot', {
-                inputLength: contextData.chat.length,
-                stLength: stHistory.length,
-                last: lastInjected ? {
-                    role: lastInjected.role,
-                    is_user: lastInjected.is_user,
-                    is_system: lastInjected.is_system,
-                    name: lastInjected.name,
-                    mes: lastInjected.mes?.slice?.(0, 60),
-                    content: lastInjected.content?.slice?.(0, 60)
-                } : null,
-                tail: this._summarizeChat(stHistory)
+            
+            logger.debug({ 
+                kind: 'sys', 
+                component: COMPONENT, 
+                message: 'Loading context chat', 
+                meta: {
+                    inputLength: contextData.chat.length,
+                    stLength: stHistory.length,
+                    tail: this._summarizeChat(stHistory)
+                }
             });
 
             // Replace the chat array reference or content
@@ -359,10 +362,6 @@ export class STEngineAdapter implements ISTEngine {
             } else {
                 win.chat = stHistory;
             }
-            console.log('[STEngine] loadContext applied to win.chat', {
-                winLength: win.chat?.length,
-                tail: this._summarizeChat(win.chat || [])
-            });
             
             // Ensure 'chat_metadata' exists if ST needs it
             if (!win.chat_metadata) win.chat_metadata = {};
@@ -377,7 +376,7 @@ export class STEngineAdapter implements ISTEngine {
                 
                 // Check if system prompt is already at start
                 if (win.chat.length === 0 || !win.chat[0].is_system) {
-                    console.log('[STEngine] Injecting System Prompt into Chat History (Workaround)');
+                    logger.debug({ kind: 'sys', component: COMPONENT, message: 'Injecting system prompt workaround' });
                     win.chat.unshift({
                         name: 'System',
                         is_user: false,
@@ -389,7 +388,12 @@ export class STEngineAdapter implements ISTEngine {
                 }
             }
             
-            console.log(`[STEngine] Injected ${win.chat.length} messages.`);
+            logger.debug({ 
+                kind: 'sys', 
+                component: COMPONENT, 
+                message: 'Context loaded', 
+                meta: { messageCount: win.chat.length } 
+            });
         }
 
         // 3. Set Online Status (Fake it)
@@ -571,31 +575,35 @@ export class STEngineAdapter implements ISTEngine {
         this._ensureOnlineStatus();
         
         // 2. Call Generate
-        console.log('[STEngine] Calling Generate...');
+        logger.debug({ kind: 'sys', component: COMPONENT, message: 'Calling Generate' });
         const win = this.instance.window;
         
         // [DEBUG] Check Character Selection State before generation
-        console.log(`[STEngine] Pre-Generate Check - this_chid: ${win.this_chid}`);
-        console.log(`[STEngine] Pre-Generate Check - characters[0] exists: ${!!win.characters?.[0]}`);
-        console.log(`[STEngine] Pre-Generate Check - oai_settings keys: ${Object.keys(win.oai_settings || {}).join(', ')}`);
-        console.log(`[STEngine] Pre-Generate Check - oai_settings.prompts length: ${win.oai_settings?.prompts?.length}`);
-        console.log('[STEngine] Pre-Generate oai_settings ref check', {
-            sameRef: win.oai_settings === this.userConfig.oai_settings,
-            windowKeys: Object.keys(win.oai_settings || {}),
-            userKeys: Object.keys(this.userConfig.oai_settings || {})
+        logger.debug({ 
+            kind: 'sys', 
+            component: COMPONENT, 
+            message: 'Pre-Generate state check', 
+            meta: {
+                this_chid: win.this_chid,
+                hasCharacter: !!win.characters?.[0],
+                oai_settings_keys: Object.keys(win.oai_settings || {}).join(', '),
+                prompts_length: win.oai_settings?.prompts?.length
+            }
         });
         
         // Ensure character is selected if not already (Double Tap)
         if (typeof win.selectCharacterById === 'function' && win.this_chid !== 0) {
-             console.log('[STEngine] Force-calling selectCharacterById(0)...');
+             logger.debug({ kind: 'sys', component: COMPONENT, message: 'Force-calling selectCharacterById(0)' });
              await win.selectCharacterById(0);
         }
 
         // Capture the chat length before generation to detect new messages
         const initialChatLength = win.chat ? win.chat.length : 0;
-        console.log('[STEngine] Pre-Generate chat snapshot', {
-            length: initialChatLength,
-            tail: this._summarizeChat(win.chat || [])
+        logger.debug({ 
+            kind: 'sys', 
+            component: COMPONENT, 
+            message: 'Pre-Generate chat state', 
+            meta: { length: initialChatLength, tail: this._summarizeChat(win.chat || []) }
         });
 
         try {
@@ -605,8 +613,10 @@ export class STEngineAdapter implements ISTEngine {
             // because generate_data global is cleared or not set correctly in our mock env.
             // But usually the request has already been sent.
             if (e.message && e.message.includes("reading 'prompt'")) {
-                console.warn('[STEngine] Suppressing expected error:', e.message);
+                logger.warn({ kind: 'sys', component: COMPONENT, message: 'Suppressing expected ST error', meta: { error: e.message } });
             } else {
+                // 关键：完整暴露原始错误
+                logger.error({ kind: 'sys', component: COMPONENT, message: 'Generate failed', error: e });
                 throw e;
             }
         }
@@ -619,9 +629,11 @@ export class STEngineAdapter implements ISTEngine {
         // Assuming our FetchInterceptor awaits the full response, ST should have updated the chat array.
         
         if (win.chat && win.chat.length > initialChatLength) {
-            console.log('[STEngine] Post-Generate chat snapshot', {
-                length: win.chat.length,
-                tail: this._summarizeChat(win.chat)
+            logger.debug({ 
+                kind: 'sys', 
+                component: COMPONENT, 
+                message: 'Post-Generate chat state', 
+                meta: { length: win.chat.length, tail: this._summarizeChat(win.chat) }
             });
             const lastMsg = win.chat[win.chat.length - 1];
             return lastMsg;

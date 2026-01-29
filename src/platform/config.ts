@@ -4,6 +4,8 @@ import path from 'path';
 // Load environment variables from .env file
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
 export interface Config {
     telegram: {
         token: string;
@@ -20,6 +22,10 @@ export interface Config {
     };
     st: {
         mockDataPath: string;
+    };
+    logging: {
+        level: LogLevel;
+        dir: string;
     };
 }
 
@@ -43,7 +49,11 @@ const config: Config = {
     },
     st: {
         mockDataPath: path.resolve(process.cwd(), 'src/infrastructure/mock_data'),
-    }
+    },
+    logging: {
+        level: (process.env.LOG_LEVEL as LogLevel) || 'info',
+        dir: process.env.LOG_DIR || path.resolve(process.cwd(), 'logs'),
+    },
 };
 
 export default config;

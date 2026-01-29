@@ -68,3 +68,9 @@ docker/CoreFactory.js
 
 # 忽略本地测试日志或临时文件
 *.log
+
+# 忽略日志目录 (winston-daily-rotate-file 输出)
+logs/
+
+# 忽略 Git 运维工具生成的日志
+ops/git/logs/

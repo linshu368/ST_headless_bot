@@ -23,6 +23,6 @@
     "esm": true,
     "experimentalSpecifierResolution": "node"
   },
-  "include": ["src/**/*", "docker/**/*", "cli_chat_demo.ts"],
+  "include": ["src/**/*", "docker/**/*", "ops/**/*", "cli_chat_demo.ts"],
   "exclude": ["node_modules", "data", "public"]
 }

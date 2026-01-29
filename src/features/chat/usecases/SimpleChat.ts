@@ -3,6 +3,9 @@ import {
     applyStreamChar,
     createInitialStreamScheduleState,
 } from '../rules/streamingSchedule.js';
+import { logger } from '../../../platform/logger.js';
+
+const COMPONENT = 'SimpleChat';
 
 /**
  * Layer 2 Usecase: 处理用户消息
@@ -26,7 +29,7 @@ export class SimpleChat {
      * @returns 机器人的回复文本
      */
     async chat(userId: string, userInput: string): Promise<string> {
-        console.log(`[SimpleChat] Processing for user: ${userId}`);
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Processing chat request' });
 
         // 1. 获取会话 (Session Resolution)
         // 这一步涵盖了：检查缓存 -> (无) -> 加载角色 -> 初始化引擎 -> 返回会话
@@ -48,11 +51,16 @@ export class SimpleChat {
         const lastBeforeInject = session.history[session.history.length - 1];
         const lastIsSameUserInput =
             lastBeforeInject?.role === 'user' && lastBeforeInject?.content === userInput;
-        console.log('[SimpleChat] Pre-inject history snapshot (no user push yet)', {
-            length: session.history.length,
-            last: lastBeforeInject ? { role: lastBeforeInject.role, content: lastBeforeInject.content?.slice(0, 60) } : null,
-            lastIsSameUserInput,
-            tail: previewHistory(session.history),
+        logger.debug({ 
+            kind: 'biz', 
+            component: COMPONENT, 
+            message: 'Pre-inject history snapshot', 
+            meta: {
+                length: session.history.length,
+                last: lastBeforeInject ? { role: lastBeforeInject.role, content: lastBeforeInject.content?.slice(0, 60) } : null,
+                lastIsSameUserInput,
+                tail: previewHistory(session.history),
+            }
         });
 
         // 4. 同步状态到 Layer 3 (Adapter)
@@ -60,9 +68,14 @@ export class SimpleChat {
         // Engine 内部负责将其转换为 ST 格式
         // 深拷贝以防止引用污染
         const historySnapshot = JSON.parse(JSON.stringify(session.history));
-        console.log('[SimpleChat] Injecting history into engine', {
-            length: historySnapshot.length,
-            tail: previewHistory(historySnapshot),
+        logger.debug({ 
+            kind: 'biz', 
+            component: COMPONENT, 
+            message: 'Injecting history into engine', 
+            meta: {
+                length: historySnapshot.length,
+                tail: previewHistory(historySnapshot),
+            }
         });
         
         await session.engine.loadContext({
@@ -82,12 +95,23 @@ export class SimpleChat {
             } else if (typeof rawReply === 'string') {
                 replyText = rawReply;
             } else {
-                console.warn('[SimpleChat] Unexpected reply format:', rawReply);
+                logger.warn({ 
+                    kind: 'biz', 
+                    component: COMPONENT, 
+                    message: 'Unexpected reply format', 
+                    meta: { rawReply: JSON.stringify(rawReply).slice(0, 200) } 
+                });
                 replyText = JSON.stringify(rawReply);
             }
             
         } catch (error) {
-            console.error('[SimpleChat] Generation failed:', error);
+            // 关键：完整暴露错误信息
+            logger.error({ 
+                kind: 'biz', 
+                component: COMPONENT, 
+                message: 'Generation failed', 
+                error  // 传入原始错误对象
+            });
             // 错误处理规约：返回固定错误提示，不崩溃
             return "我好像走神了... (Generation Error)";
         }
@@ -106,7 +130,7 @@ export class SimpleChat {
             // 返回纯文本给 Layer 1 (Telegram)
             return replyText;
         } else {
-            console.error('[SimpleChat] Generation returned empty');
+            logger.error({ kind: 'biz', component: COMPONENT, message: 'Generation returned empty' });
             return "收到空回复...";
         }
     }
@@ -123,7 +147,7 @@ export class SimpleChat {
         isFinal: boolean;
         firstResponseMs?: number;
     }> {
-        console.log(`[SimpleChat] Streaming for user: ${userId}`);
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Streaming chat started' });
 
         const session = await this.sessionManager.getOrCreateSession(userId);
 
@@ -138,17 +162,27 @@ export class SimpleChat {
         const lastBeforeInject = session.history[session.history.length - 1];
         const lastIsSameUserInput =
             lastBeforeInject?.role === 'user' && lastBeforeInject?.content === userInput;
-        console.log('[SimpleChat] Pre-inject history snapshot (no user push yet)', {
-            length: session.history.length,
-            last: lastBeforeInject ? { role: lastBeforeInject.role, content: lastBeforeInject.content?.slice(0, 60) } : null,
-            lastIsSameUserInput,
-            tail: previewHistory(session.history),
+        logger.debug({ 
+            kind: 'biz', 
+            component: COMPONENT, 
+            message: 'Pre-inject history snapshot', 
+            meta: {
+                length: session.history.length,
+                last: lastBeforeInject ? { role: lastBeforeInject.role, content: lastBeforeInject.content?.slice(0, 60) } : null,
+                lastIsSameUserInput,
+                tail: previewHistory(session.history),
+            }
         });
 
         const historySnapshot = JSON.parse(JSON.stringify(session.history));
-        console.log('[SimpleChat] Injecting history into engine', {
-            length: historySnapshot.length,
-            tail: previewHistory(historySnapshot),
+        logger.debug({ 
+            kind: 'biz', 
+            component: COMPONENT, 
+            message: 'Injecting history into engine', 
+            meta: {
+                length: historySnapshot.length,
+                tail: previewHistory(historySnapshot),
+            }
         });
 
         await session.engine.loadContext({
@@ -190,7 +224,13 @@ export class SimpleChat {
                 }
             }
         } catch (error) {
-            console.error('[SimpleChat] Streaming generation failed:', error);
+            // 关键：完整暴露错误信息，然后向上抛出
+            logger.error({ 
+                kind: 'biz', 
+                component: COMPONENT, 
+                message: 'Streaming generation failed', 
+                error  // 传入原始错误对象
+            });
             throw error;
         }
 
@@ -220,8 +260,15 @@ export class SimpleChat {
                 role: 'assistant',
                 content: accumulatedText
             });
+            
+            logger.info({ 
+                kind: 'biz', 
+                component: COMPONENT, 
+                message: 'Streaming chat completed', 
+                meta: { replyLength: accumulatedText.length, latencyMs: Date.now() - startedAtMs } 
+            });
         } else {
-            console.error('[SimpleChat] Streaming returned empty');
+            logger.error({ kind: 'biz', component: COMPONENT, message: 'Streaming returned empty' });
         }
     }
 
@@ -240,4 +287,3 @@ export class SimpleChat {
         this.sessionManager.destroySession(userId);
     }
 }
-

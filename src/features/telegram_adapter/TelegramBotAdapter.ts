@@ -1,6 +1,10 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { SimpleChat } from '../chat/usecases/SimpleChat.js';
 import config from '../../platform/config.js';
+import { logger } from '../../platform/logger.js';
+import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
+
+const COMPONENT = 'TelegramBot';
 
 /**
  * Telegram Adapter (Layer 1 Interface)
@@ -23,7 +27,7 @@ export class TelegramBotAdapter {
             const { scheme, host, port } = config.telegram.proxy;
             const proxyUrl = `${scheme}://${host}:${port}`;
             requestOptions.proxy = proxyUrl;
-            console.log(`[TelegramBot] Using proxy: ${proxyUrl}`);
+            logger.info({ kind: 'sys', component: COMPONENT, message: `Using proxy: ${proxyUrl}` });
         }
 
         // 创建 Bot 实例 (Polling 模式)
@@ -39,19 +43,21 @@ export class TelegramBotAdapter {
      */
     async start(): Promise<void> {
         if (this.isPolling) {
-            console.warn('[TelegramBot] Already polling.');
+            logger.warn({ kind: 'sys', component: COMPONENT, message: 'Already polling' });
             return;
         }
 
-        console.log('[TelegramBot] Starting polling...');
+        logger.info({ kind: 'sys', component: COMPONENT, message: 'Starting polling...' });
         
         // 注册事件处理
         this.bot.on('message', this._handleMessage.bind(this));
-        this.bot.on('polling_error', (error) => console.error('[TelegramBot] Polling error:', error));
+        this.bot.on('polling_error', (error) => {
+            logger.error({ kind: 'sys', component: COMPONENT, message: 'Polling error', error });
+        });
 
         await this.bot.startPolling();
         this.isPolling = true;
-        console.log('[TelegramBot] Service is online.');
+        logger.info({ kind: 'sys', component: COMPONENT, message: 'Service is online' });
     }
 
     /**
@@ -61,77 +67,114 @@ export class TelegramBotAdapter {
         if (!this.isPolling) return;
         await this.bot.stopPolling();
         this.isPolling = false;
-        console.log('[TelegramBot] Service stopped.');
+        logger.info({ kind: 'sys', component: COMPONENT, message: 'Service stopped' });
     }
 
     /**
      * 核心消息处理器
+     * 关键：使用 runWithTraceId 包裹，实现全链路追踪
      */
     private async _handleMessage(msg: TelegramBot.Message): Promise<void> {
         const chatId = msg.chat.id.toString(); // 使用 ChatID 作为 UserId (支持私聊)
         const text = msg.text;
+        const messageId = msg.message_id;
 
-        // 0. 去重处理 (幂等性)
-        if (this.processedMessageIds.has(msg.message_id)) {
-            console.log(`[TelegramBot] Ignoring duplicate message ${msg.message_id} from ${chatId}`);
-            return;
-        }
-        this.processedMessageIds.add(msg.message_id);
+        // 生成 Trace ID 并包裹整个处理流程
+        const traceId = generateTraceId();
         
-        // 简单清理过期 ID
-        if (this.processedMessageIds.size > this.MAX_PROCESSED_IDS) {
-            const iterator = this.processedMessageIds.values();
-            for (let i = 0; i < 100; i++) {
-                const nextValue = iterator.next().value;
-                if (nextValue !== undefined) {
-                    this.processedMessageIds.delete(nextValue);
+        await runWithTraceId(traceId, async () => {
+            // 设置用户 ID 到上下文
+            setUserId(chatId);
+
+            // 0. 去重处理 (幂等性)
+            if (this.processedMessageIds.has(messageId)) {
+                logger.debug({ kind: 'sys', component: COMPONENT, message: 'Ignoring duplicate message', meta: { messageId, chatId } });
+                return;
+            }
+            this.processedMessageIds.add(messageId);
+            
+            // 简单清理过期 ID
+            if (this.processedMessageIds.size > this.MAX_PROCESSED_IDS) {
+                const iterator = this.processedMessageIds.values();
+                for (let i = 0; i < 100; i++) {
+                    const nextValue = iterator.next().value;
+                    if (nextValue !== undefined) {
+                        this.processedMessageIds.delete(nextValue);
+                    }
                 }
             }
-        }
 
-        if (!text) return; // 忽略非文本消息
+            if (!text) return; // 忽略非文本消息
 
-        console.log(`[TelegramBot] Received from ${chatId}: ${text}`);
+            logger.info({ 
+                kind: 'sys', 
+                component: COMPONENT, 
+                message: 'Message received', 
+                meta: { chatId, text: text.slice(0, 100), messageId } 
+            });
 
-        // 1. 指令处理
-        if (text.startsWith('/')) {
-            await this._handleCommand(chatId, text);
-            return;
-        }
+            // 1. 指令处理
+            if (text.startsWith('/')) {
+                await this._handleCommand(chatId, text);
+                return;
+            }
 
-        // 2. 普通对话处理
-        try {
-            // 发送 "typing" 状态，提升用户体验
-            this.bot.sendChatAction(msg.chat.id, 'typing');
+            // 2. 普通对话处理
+            const startTime = Date.now();
+            try {
+                // 发送 "typing" 状态，提升用户体验
+                this.bot.sendChatAction(msg.chat.id, 'typing');
 
-            const placeholder = await this.bot.sendMessage(msg.chat.id, '✍️输入中...');
-            let lastText = '';
+                const placeholder = await this.bot.sendMessage(msg.chat.id, '✍️输入中...');
+                let lastText = '';
 
-            for await (const update of this.simpleChat.streamChat(chatId, text)) {
-                if (!update.text || update.text === lastText) continue;
+                for await (const update of this.simpleChat.streamChat(chatId, text)) {
+                    if (!update.text || update.text === lastText) continue;
 
-                if (update.isFirst && update.firstResponseMs !== undefined) {
-                    console.log(`[TelegramBot] First response in ${update.firstResponseMs}ms`);
+                    if (update.isFirst && update.firstResponseMs !== undefined) {
+                        logger.info({ 
+                            kind: 'biz', 
+                            component: COMPONENT, 
+                            message: 'First response received', 
+                            meta: { firstResponseMs: update.firstResponseMs } 
+                        });
+                    }
+
+                    await this.bot.editMessageText(update.text, {
+                        chat_id: msg.chat.id,
+                        message_id: placeholder.message_id
+                    });
+                    lastText = update.text;
                 }
 
-                await this.bot.editMessageText(update.text, {
-                    chat_id: msg.chat.id,
-                    message_id: placeholder.message_id
-                });
-                lastText = update.text;
-            }
+                if (!lastText) {
+                    await this.bot.editMessageText("收到空回复...", {
+                        chat_id: msg.chat.id,
+                        message_id: placeholder.message_id
+                    });
+                    logger.warn({ kind: 'biz', component: COMPONENT, message: 'Empty reply from generation' });
+                } else {
+                    const latencyMs = Date.now() - startTime;
+                    logger.info({ 
+                        kind: 'biz', 
+                        component: COMPONENT, 
+                        message: 'Chat completed', 
+                        meta: { replyLength: lastText.length, latencyMs } 
+                    });
+                }
 
-            if (!lastText) {
-                await this.bot.editMessageText("收到空回复...", {
-                    chat_id: msg.chat.id,
-                    message_id: placeholder.message_id
+            } catch (error) {
+                // 关键：完整暴露错误信息
+                logger.error({ 
+                    kind: 'sys', 
+                    component: COMPONENT, 
+                    message: 'Error handling message', 
+                    error,  // 传入原始错误对象
+                    meta: { chatId, text: text.slice(0, 50) } 
                 });
+                await this.bot.sendMessage(msg.chat.id, "抱歉，系统暂时出现故障，请稍后再试。");
             }
-
-        } catch (error) {
-            console.error(`[TelegramBot] Error handling message for ${chatId}:`, error);
-            await this.bot.sendMessage(msg.chat.id, "抱歉，系统暂时出现故障，请稍后再试。");
-        }
+        });
     }
 
     /**
@@ -140,6 +183,8 @@ export class TelegramBotAdapter {
     private async _handleCommand(chatId: string, commandText: string): Promise<void> {
         const command = commandText.split(' ')[0].toLowerCase();
 
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Command received', meta: { command } });
+
         switch (command) {
             case '/start':
                 await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。\n发送 /reset 可重置当前会话。");
@@ -147,6 +192,7 @@ export class TelegramBotAdapter {
             
             case '/reset':
                 this.simpleChat.resetSession(chatId);
+                logger.info({ kind: 'biz', component: COMPONENT, message: 'Session reset by user' });
                 await this.bot.sendMessage(chatId, "会话已重置，记忆已清除。");
                 break;
 
@@ -155,9 +201,9 @@ export class TelegramBotAdapter {
                 break;
 
             default:
+                logger.debug({ kind: 'biz', component: COMPONENT, message: 'Unknown command', meta: { command } });
                 await this.bot.sendMessage(chatId, "未知指令。发送 /help 查看帮助。");
                 break;
         }
     }
 }
-

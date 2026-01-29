@@ -1,0 +1,23 @@
+# 当前工作流任务
+
+## 任务: Git 运维工具迁移
+
+### 背景
+从 Python 项目 (tg_bot_picture_v1) 迁移 Git 运维工具到当前 TypeScript 项目。
+
+### 目标
+1. 实现 AI 自动生成 commit 消息
+2. 实现 AI 自动生成 push 日志 (工程 + 产品视角)
+3. 保持快照归档机制
+
+### 原则
+- 语言统一为 TypeScript
+- 复用项目现有配置 (platform/config.ts)
+- 保持功能逻辑不变，只做必要适配
+
+### 完成标准
+- [ ] TypeScript 版本 gptCaller 可用
+- [ ] commit-msg hook 正常工作
+- [ ] post-commit hook 保存快照
+- [ ] pre-push hook 生成日志
+- [ ] 快照自动归档到 pushlog 目录

@@ -1,0 +1,63 @@
+# SillyTavern Telegram Bot 架构说明
+
+## 项目概述
+这是一个将 SillyTavern 前端封装为 Telegram Bot 的项目，采用清晰的 4 层架构设计。
+
+## 技术栈
+- 语言: TypeScript (ES Module)
+- 运行时: Node.js 18+
+- 核心依赖: node-telegram-bot-api, node-fetch, winston
+
+## 4 层架构
+
+### Layer 1: Adapter (适配器层)
+- `TelegramBotAdapter`: Telegram 消息监听与回复
+- 职责: 监听 TG 消息 → 路由指令 → 调用 UseCase → 发送回复
+
+### Layer 2: Usecase (用例层)
+- `SimpleChat`: 对话流程编排
+- `SessionManager`: 会话生命周期管理
+- 职责: 串联业务流程，不负责算法细节
+
+### Layer 3: Ports (端口层)
+- `ISTEngine`: ST 引擎接口声明
+- `ISTNetworkHandler`: 网络处理器接口
+- 职责: 定义外部能力的需求声明
+
+### Layer 4: Infrastructure (基础设施层)
+- `STEngineAdapter`: SillyTavern 引擎适配器
+- `FetchInterceptor`: 网络请求劫持与转发
+- `VirtualContext`: 虚拟 DOM/Window 环境
+- `CoreFactory.cjs`: 打包后的 ST 前端代码
+- 职责: 实现 ports，对接外部系统
+
+## 横切包
+
+### Platform (平台能力)
+- `config.ts`: 统一配置管理
+- `logger.ts`: 结构化日志 (winston)
+- `tracing.ts`: 全链路追踪 (AsyncLocalStorage)
+
+## 目录结构
+```
+src/
+├── features/           # 按功能垂直切片
+│   ├── chat/          # 对话功能
+│   │   ├── rules/     # 纯函数规则
+│   │   └── usecases/  # 用例编排
+│   ├── session/       # 会话管理
+│   └── telegram_adapter/  # TG 适配器
+├── infrastructure/     # 基础设施
+│   ├── networking/    # 网络层
+│   └── st_matrix/     # ST 引擎虚拟化
+├── platform/          # 横切能力
+└── core/ports/        # 端口声明
+```
+
+## 数据流
+1. 用户发送 TG 消息
+2. TelegramBotAdapter 接收，包裹 traceId
+3. SimpleChat 获取会话，注入历史
+4. STEngineAdapter 调用 Generate
+5. FetchInterceptor 拦截并转发到真实 LLM API
+6. 流式返回，更新 TG 消息

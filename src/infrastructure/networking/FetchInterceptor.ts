@@ -3,6 +3,9 @@ import path from 'path';
 import fetch, { Response } from 'node-fetch';
 import { ProxyAgent } from 'proxy-agent';
 import globalConfig from '../../platform/config.js';
+import { logger } from '../../platform/logger.js';
+
+const COMPONENT = 'FetchInterceptor';
 
 export interface FetchInterceptorConfig {
     api_key_openai?: string;
@@ -65,7 +68,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
 
         // 1. Intercept Ping
         if (urlStr === 'api/ping' || normalizedUrl === '/api/ping') {
-            console.log('[Network] Hijacked Ping. Returning 200 OK.');
+            logger.debug({ kind: 'sys', component: COMPONENT, message: 'Hijacked ping' });
             return {
                 ok: true,
                 status: 200,
@@ -78,32 +81,32 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
         
         // 2. Intercept Character Fetch (Crucial for Initialization)
         if (normalizedUrl === '/api/characters/all') {
-             console.log(`[Network] Hijacked /api/characters/all. Returning ${mockState.characters.length} characters.`);
-             return {
-                 ok: true,
-                 status: 200,
-                 headers: { get: () => null },
-                 json: async () => mockState.characters
-             };
+            logger.debug({ kind: 'sys', component: COMPONENT, message: 'Hijacked /api/characters/all', meta: { count: mockState.characters.length } });
+            return {
+                ok: true,
+                status: 200,
+                headers: { get: () => null },
+                json: async () => mockState.characters
+            };
         }
         
         // 3. Intercept Chat Fetch
         if (normalizedUrl === '/api/chats/get') {
-             console.log(`[Network] Hijacked /api/chats/get. Returning ${mockState.chats.length} chats.`);
-             return {
-                 ok: true,
-                 status: 200,
-                 headers: { get: () => null },
-                 json: async () => mockState.chats
-             };
+            logger.debug({ kind: 'sys', component: COMPONENT, message: 'Hijacked /api/chats/get', meta: { count: mockState.chats.length } });
+            return {
+                ok: true,
+                status: 200,
+                headers: { get: () => null },
+                json: async () => mockState.chats
+            };
         }
     
         // 3.1 Intercept Stats
         if (normalizedUrl.includes('/api/stats/get') || normalizedUrl.includes('/api/stats/update')) {
-             return {
-                 ok: true,
-                 json: async () => ({})
-             };
+            return {
+                ok: true,
+                json: async () => ({})
+            };
         }
 
         // 3.1.1 Intercept Secrets (in-memory mock)
@@ -153,7 +156,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     
         // 3.2 Intercept Chat Save
         if (normalizedUrl === '/api/chats/save') {
-            console.log('[Network] Hijacked /api/chats/save. Success.');
+            logger.debug({ kind: 'sys', component: COMPONENT, message: 'Hijacked /api/chats/save' });
             // Ideally we should update mockState.chats here if we want persistence simulation
             return {
                 ok: true,
@@ -164,7 +167,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     
         // 3.3 Intercept Chat Generation (Proxy to Real LLM)
         if (normalizedUrl === '/api/backends/chat-completions/generate') {
-            console.log('[Network] Hijacked Chat Generation Request.');
+            logger.info({ kind: 'sys', component: COMPONENT, message: 'Intercepted chat generation request' });
             try {
                 // Determine Configuration (Env vars take precedence over ST config)
                 // Use globalConfig for sensitive credentials
@@ -177,7 +180,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                     ? baseUrl
                     : `${baseUrl}/chat/completions`;
                 
-                console.log(`[Network] Forwarding to LLM: ${targetUrl}`);
+                logger.info({ kind: 'sys', component: COMPONENT, message: 'Forwarding to LLM', meta: { targetUrl, model } });
                 
                 // Prepare Headers
                 const headers: Record<string, string> = {
@@ -190,31 +193,34 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 try {
                     requestBody = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
                 } catch (e) {
-                    console.error('[Network] Failed to parse body', e);
+                    logger.error({ kind: 'sys', component: COMPONENT, message: 'Failed to parse request body', error: e });
                 }
 
                 const bodyKeys = requestBody ? Object.keys(requestBody) : [];
                 const messageCount = Array.isArray(requestBody?.messages) ? requestBody.messages.length : 0;
-                console.log(`[Network] Request body keys: ${bodyKeys.join(', ') || '(empty)'}`);
-                console.log(`[Network] messages length: ${messageCount}`);
                 
-
-                // [DEBUG] Print the first message (System Prompt) to check character injection
-                if (requestBody.messages && requestBody.messages.length > 0) {
-                    console.log('[Network] First Message (System Prompt/Role):');
-                    console.log(JSON.stringify(requestBody.messages[0], null, 2));
-                    
-                    // Also print the last message to see user input
-                    if (requestBody.messages.length > 1) {
-                        console.log('[Network] Last Message (User Input):');
-                        console.log(JSON.stringify(requestBody.messages[requestBody.messages.length - 1], null, 2));
-                    }
-               }
+                logger.debug({ 
+                    kind: 'sys', 
+                    component: COMPONENT, 
+                    message: 'LLM request details', 
+                    meta: { 
+                        bodyKeys: bodyKeys.join(', ') || '(empty)', 
+                        messageCount,
+                        firstMessage: requestBody.messages?.[0] ? {
+                            role: requestBody.messages[0].role,
+                            content: requestBody.messages[0].content?.slice(0, 100)
+                        } : null,
+                        lastMessage: requestBody.messages?.length > 1 ? {
+                            role: requestBody.messages[requestBody.messages.length - 1].role,
+                            content: requestBody.messages[requestBody.messages.length - 1].content?.slice(0, 100)
+                        } : null
+                    } 
+                });
                
                 // Force override model
                 if (model) {
-                     console.log(`[Network] Overriding model: ${requestBody.model} -> ${model}`);
-                     requestBody.model = model;
+                    logger.debug({ kind: 'sys', component: COMPONENT, message: 'Overriding model', meta: { from: requestBody.model, to: model } });
+                    requestBody.model = model;
                 }
 
                 // Ensure chat-completions has messages. Some ST flows may send prompt-like fields.
@@ -245,7 +251,14 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
 
                 if (!response.ok) {
                     const errText = await response.text();
-                    console.error('[Network] LLM Error:', errText);
+                    // 关键：完整暴露 LLM API 错误
+                    logger.error({ 
+                        kind: 'sys', 
+                        component: COMPONENT, 
+                        message: 'LLM API error', 
+                        error: new Error(errText),
+                        meta: { status: response.status, statusText: response.statusText }
+                    });
                     if (streamSink) {
                         streamSink.onError(new Error(errText));
                     }
@@ -271,7 +284,13 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 return response;
     
             } catch (err: any) {
-                console.error('[Network] Chat Generation Proxy Failed:', err);
+                // 关键：完整暴露原始错误
+                logger.error({ 
+                    kind: 'sys', 
+                    component: COMPONENT, 
+                    message: 'Chat generation proxy failed', 
+                    error: err  // 传入原始错误对象
+                });
                 if (streamSink) {
                     streamSink.onError(err instanceof Error ? err : new Error(String(err)));
                 }
@@ -287,7 +306,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
 
         // 3.4 Intercept Chat Status (Always Connected)
         if (normalizedUrl === '/api/backends/chat-completions/status') {
-            console.log('[Network] Hijacked Chat Status. Returning connected.');
+            logger.debug({ kind: 'sys', component: COMPONENT, message: 'Hijacked chat status' });
             return {
                 ok: true,
                 status: 200,
@@ -301,45 +320,43 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     
         // 4. Fallback: Serve Static Files (Crucial for Templates, WASM, etc.)
         if (!urlStr.startsWith('http')) {
-            // console.log(`[Network] Static File Request: ${url}`);
             try {
                 const cleanUrl = urlStr.split('?')[0];
                 const relativePath = cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl;
                 const filePath = path.join(process.cwd(), 'public', relativePath);
                 
                 if (fs.existsSync(filePath)) {
-                     const content = fs.readFileSync(filePath); 
-                     return {
-                         ok: true,
-                         status: 200,
-                         headers: { get: () => null },
-                         arrayBuffer: async () => {
-                             const buf = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength);
-                             return buf;
-                         },
-                         text: async () => content.toString('utf-8'), 
-                         json: async () => JSON.parse(content.toString('utf-8')), 
-                         blob: async () => ({ arrayBuffer: async () => content.buffer }), 
-                     };
+                    const content = fs.readFileSync(filePath); 
+                    return {
+                        ok: true,
+                        status: 200,
+                        headers: { get: () => null },
+                        arrayBuffer: async () => {
+                            const buf = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength);
+                            return buf;
+                        },
+                        text: async () => content.toString('utf-8'), 
+                        json: async () => JSON.parse(content.toString('utf-8')), 
+                        blob: async () => ({ arrayBuffer: async () => content.buffer }), 
+                    };
                 } else {
-                     // console.warn(`[Network] Static File Not Found: ${filePath}`);
-                     return {
-                         ok: false,
-                         status: 404,
-                         headers: { get: () => null },
-                         text: async () => 'Not Found',
-                         json: async () => ({}),
-                     };
+                    return {
+                        ok: false,
+                        status: 404,
+                        headers: { get: () => null },
+                        text: async () => 'Not Found',
+                        json: async () => ({}),
+                    };
                 }
             } catch (fileErr) {
-                console.error(`[Network] Static File Error:`, fileErr);
-                 return {
-                     ok: false,
-                     status: 500,
-                     headers: { get: () => null },
-                     text: async () => 'Internal Error',
-                     json: async () => ({}),
-                 };
+                logger.error({ kind: 'sys', component: COMPONENT, message: 'Static file error', error: fileErr });
+                return {
+                    ok: false,
+                    status: 500,
+                    headers: { get: () => null },
+                    text: async () => 'Internal Error',
+                    json: async () => ({}),
+                };
             }
         }
     
@@ -348,7 +365,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
             // @ts-ignore
             return await fetch(url, options);
         } catch (error) {
-            console.error('[Network] Request Failed:', error);
+            logger.error({ kind: 'sys', component: COMPONENT, message: 'Request failed', error });
             throw error;
         }
     }) as FetchInterceptor;
@@ -403,7 +420,7 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null): P
                         sink?.onDelta(delta);
                     }
                 } catch (e) {
-                    console.warn('[Network] Failed to parse stream chunk', e);
+                    logger.warn({ kind: 'sys', component: COMPONENT, message: 'Failed to parse stream chunk', error: e });
                 }
             }
         }
@@ -419,7 +436,7 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null): P
                         sink?.onDelta(delta);
                     }
                 } catch (e) {
-                    console.warn('[Network] Failed to parse stream tail', e);
+                    logger.warn({ kind: 'sys', component: COMPONENT, message: 'Failed to parse stream tail', error: e });
                 }
             }
         }
@@ -449,4 +466,3 @@ const buildChatCompletionResponse = (content: string, model?: string) => ({
         }
     ]
 });
-

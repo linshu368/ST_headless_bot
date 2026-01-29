@@ -3,6 +3,9 @@ import path from 'path';
 import config from '../../../platform/config.js';
 import { STEngineAdapter } from '../../../infrastructure/st_matrix/STEngineAdapter.js';
 import { createFetchInterceptor } from '../../../infrastructure/networking/FetchInterceptor.js';
+import { logger } from '../../../platform/logger.js';
+
+const COMPONENT = 'SessionManager';
 
 /**
  * Standard OpenAI Message Format (Layer 2 Pure)
@@ -53,7 +56,7 @@ export class SessionManager {
             return session;
         }
 
-        console.log(`[SessionManager] Creating new session for user: ${userId}`);
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Creating new session' });
         session = await this._createSession(userId);
         this.sessions.set(userId, session);
         return session;
@@ -66,7 +69,9 @@ export class SessionManager {
         // 1. Load Character (Mock Data Source)
         const charPath = path.join(config.st.mockDataPath, 'seraphina_v2.json');
         if (!fs.existsSync(charPath)) {
-            throw new Error(`Character file not found: ${charPath}`);
+            const error = new Error(`Character file not found: ${charPath}`);
+            logger.error({ kind: 'biz', component: COMPONENT, message: 'Character file not found', error, meta: { charPath } });
+            throw error;
         }
         const character = JSON.parse(fs.readFileSync(charPath, 'utf-8'));
 
@@ -122,6 +127,13 @@ export class SessionManager {
             });
         }
 
+        logger.info({ 
+            kind: 'biz', 
+            component: COMPONENT, 
+            message: 'Session created', 
+            meta: { sessionId: `sess_${userId}_${Date.now()}`, characterName: character.name } 
+        });
+
         return {
             sessionId: `sess_${userId}_${Date.now()}`,
             userId,
@@ -139,7 +151,12 @@ export class SessionManager {
         const now = Date.now();
         for (const [userId, session] of this.sessions.entries()) {
             if (now - session.lastActive > this.SESSION_TIMEOUT_MS) {
-                console.log(`[SessionManager] Cleaning up stale session for user: ${userId}`);
+                logger.info({ 
+                    kind: 'biz', 
+                    component: COMPONENT, 
+                    message: 'Cleaning up stale session', 
+                    meta: { userId, sessionId: session.sessionId, idleMinutes: Math.round((now - session.lastActive) / 60000) } 
+                });
                 // Optional: session.engine.destroy() if implemented
                 this.sessions.delete(userId);
             }
@@ -151,9 +168,8 @@ export class SessionManager {
      */
     destroySession(userId: string): void {
         if (this.sessions.has(userId)) {
-            console.log(`[SessionManager] Manually destroying session for user: ${userId}`);
+            logger.info({ kind: 'biz', component: COMPONENT, message: 'Session destroyed by user' });
             this.sessions.delete(userId);
         }
     }
 }
-
