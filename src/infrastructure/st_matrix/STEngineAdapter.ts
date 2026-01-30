@@ -3,7 +3,7 @@ import CoreFactory from './CoreFactory.cjs';
 // @ts-ignore
 import { createVirtualContext } from './VirtualContext.js';
 import { ISTEngine, STContextData, ISTNetworkHandler } from '../../core/ports/ISTEngine.js';
-import { logger } from '../../platform/logger.js';
+import { logger, internalLogger } from '../../platform/logger.js';
 
 const COMPONENT = 'STEngine';
 
@@ -60,6 +60,21 @@ export class STEngineAdapter implements ISTEngine {
 
         // Initialize Core
         this.instance = CoreFactory(context);
+        
+        // [INTERCEPTION] Hijack Window Console to redirect ST internal logs
+        // This prevents console spam while preserving logs in a separate file for debugging
+        if (this.instance.window) {
+            const win = this.instance.window;
+            win.console = {
+                ...win.console, // Keep original methods like time/timeEnd if needed, but override main ones
+                log: (...args: any[]) => internalLogger.info(args.map(String).join(' ')),
+                debug: (...args: any[]) => internalLogger.debug(args.map(String).join(' ')),
+                info: (...args: any[]) => internalLogger.info(args.map(String).join(' ')),
+                warn: (...args: any[]) => internalLogger.warn(args.map(String).join(' ')),
+                error: (...args: any[]) => internalLogger.error(args.map(String).join(' ')),
+                trace: (...args: any[]) => internalLogger.debug(args.map(String).join(' ')),
+            };
+        }
         
         // Post-Init Fixes
         this._applyPatches();

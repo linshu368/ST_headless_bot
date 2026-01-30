@@ -184,7 +184,41 @@ const winstonLogger = winston.createLogger({
     ],
 });
 
+/**
+ * 内部调试日志 Transport (仅文件)
+ * 用于记录 ST 引擎内部产生的海量 console.log
+ */
+const internalFileTransport = new DailyRotateFile({
+    dirname: LOG_DIR,
+    filename: 'internal-%DATE%.log', // 独立的文件名
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '50m',
+    maxFiles: '3d', // 内部日志体积大，保留时间短一点
+    format: winston.format.combine(
+        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
+        jsonFormat
+    ),
+});
+
+const internalWinstonLogger = winston.createLogger({
+    level: 'debug', // 内部日志通常比较详细
+    transports: [
+        internalFileTransport, // 只写入文件，不写入 Console
+    ],
+});
+
 // ============ 封装的 Logger API ============
+
+/**
+ * 内部调试日志接口
+ * 用于接管第三方库或遗留代码的 console 输出
+ */
+export const internalLogger = {
+    debug: (message: string, ...args: any[]) => internalWinstonLogger.debug(message, { args }),
+    info: (message: string, ...args: any[]) => internalWinstonLogger.info(message, { args }),
+    warn: (message: string, ...args: any[]) => internalWinstonLogger.warn(message, { args }),
+    error: (message: string, ...args: any[]) => internalWinstonLogger.error(message, { args }),
+};
 
 /**
  * 统一的日志接口

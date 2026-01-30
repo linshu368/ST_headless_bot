@@ -238,6 +238,22 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                     requestBody.stream = true;
                 }
 
+                // [ADDED] Log the full prompt and request body for debugging
+                logger.info({
+                    kind: 'sys',
+                    component: COMPONENT,
+                    message: 'Constructed LLM Request Body',
+                    meta: {
+                        messages: requestBody.messages,
+                        params: {
+                            model: requestBody.model || model,
+                            temperature: requestBody.temperature,
+                            max_tokens: requestBody.max_tokens,
+                            stream: requestBody.stream
+                        }
+                    }
+                });
+
                 const bodyStr = JSON.stringify(requestBody);
                 
                 // Real Request to LLM
