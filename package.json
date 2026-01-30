@@ -129,6 +129,7 @@
         "start:no-csrf": "node server.js --disableCsrf",
         "postinstall": "node post-install.js",
         "test:rules": "node --loader ts-node/esm src/features/chat/rules/tests/streamingSchedule.golden.ts",
+        "test:redis": "tsx src/infrastructure/redis/tests/upstashSessionStore.test.ts",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
         "plugins:update": "node plugins update",

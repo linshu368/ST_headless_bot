@@ -187,17 +187,11 @@ export class TelegramBotAdapter {
 
         switch (command) {
             case '/start':
-                await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。\n发送 /reset 可重置当前会话。");
+                await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。");
                 break;
             
-            case '/reset':
-                this.simpleChat.resetSession(chatId);
-                logger.info({ kind: 'biz', component: COMPONENT, message: 'Session reset by user' });
-                await this.bot.sendMessage(chatId, "会话已重置，记忆已清除。");
-                break;
-
             case '/help':
-                await this.bot.sendMessage(chatId, "可用指令：\n/start - 开始\n/reset - 重置会话\n/help - 帮助");
+                await this.bot.sendMessage(chatId, "可用指令：\n/start - 开始\n/help - 帮助");
                 break;
 
             default:

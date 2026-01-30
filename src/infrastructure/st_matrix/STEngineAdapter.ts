@@ -331,6 +331,12 @@ export class STEngineAdapter implements ISTEngine {
             
             win.this_chid = 0;
             
+            // [FIX] Set global name1/name2 variables
+            // ST relies on these globals to replace {{user}} and {{char}} in mes_example
+            // Without them, the regex replacement fails and examples might be dropped or malformed
+            win.name1 = 'User'; 
+            win.name2 = activeChar.name;
+
             // Call internal setter if available to sync state, otherwise direct set
             if (typeof win.setCharacterId === 'function') {
                 win.setCharacterId(win.this_chid);

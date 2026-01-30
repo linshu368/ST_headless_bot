@@ -27,6 +27,13 @@ export interface Config {
         level: LogLevel;
         dir: string;
     };
+    redis: {
+        restUrl: string;
+        token: string;
+        namespace: string;
+        maxHistoryItems: number;
+        historyRetentionCount: number;
+    };
 }
 
 const config: Config = {
@@ -53,6 +60,15 @@ const config: Config = {
     logging: {
         level: (process.env.LOG_LEVEL as LogLevel) || 'info',
         dir: process.env.LOG_DIR || path.resolve(process.cwd(), 'logs'),
+    },
+    redis: {
+        restUrl: process.env.UPSTASH_REDIS_REST_URL || '',
+        token: process.env.UPSTASH_REDIS_REST_TOKEN || '',
+        namespace: process.env.REDIS_SESSION_NAMESPACE || 'session',
+        maxHistoryItems: Number(process.env.MAX_HISTORY_ITEMS || '150'),
+        historyRetentionCount: Number(
+            process.env.HISTORY_RETENTION_COUNT || process.env.MAX_HISTORY_ITEMS || '150'
+        ),
     },
 };
 

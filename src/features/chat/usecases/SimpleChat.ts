@@ -118,14 +118,16 @@ export class SimpleChat {
 
         if (replyText) {
             // 6. 更新 Layer 2 历史状态 (User + Bot)
-            session.history.push({
-                role: 'user',
-                content: userInput
-            });
-            session.history.push({
-                role: 'assistant',
-                content: replyText
-            });
+            await this.sessionManager.appendMessages(session, [
+                {
+                    role: 'user',
+                    content: userInput
+                },
+                {
+                    role: 'assistant',
+                    content: replyText
+                }
+            ]);
             
             // 返回纯文本给 Layer 1 (Telegram)
             return replyText;
@@ -252,14 +254,16 @@ export class SimpleChat {
         }
 
         if (accumulatedText) {
-            session.history.push({
-                role: 'user',
-                content: userInput
-            });
-            session.history.push({
-                role: 'assistant',
-                content: accumulatedText
-            });
+            await this.sessionManager.appendMessages(session, [
+                {
+                    role: 'user',
+                    content: userInput
+                },
+                {
+                    role: 'assistant',
+                    content: accumulatedText
+                }
+            ]);
             
             logger.info({ 
                 kind: 'biz', 
@@ -280,10 +284,4 @@ export class SimpleChat {
         return session.history;
     }
 
-    /**
-     * 手动重置会话
-     */
-    resetSession(userId: string): void {
-        this.sessionManager.destroySession(userId);
-    }
 }
