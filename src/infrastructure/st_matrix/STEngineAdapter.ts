@@ -47,6 +47,23 @@ export class STEngineAdapter implements ISTEngine {
     }
 
     /**
+     * Update engine configuration at runtime
+     */
+    async setConfiguration(config: Record<string, any>): Promise<void> {
+        Object.keys(config).forEach(key => {
+            this.userConfig[key] = config[key];
+            if (this.instance && this.instance.window) {
+                this.instance.window[key] = config[key];
+            }
+        });
+        
+        // If main_api changed, sync it
+        if (config.main_api) {
+            this._syncMainApi();
+        }
+    }
+
+    /**
      * Initialize the CoreFactory with a Virtual Context
      */
     async initialize(): Promise<void> {

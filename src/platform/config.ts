@@ -34,6 +34,11 @@ export interface Config {
         maxHistoryItems: number;
         historyRetentionCount: number;
     };
+    ai_config_source: {
+        profiles: Record<string, any>;
+        pipelines: Record<string, string[]>;
+        tier_mapping: Record<string, string>;
+    };
 }
 
 const config: Config = {
@@ -70,6 +75,56 @@ const config: Config = {
             process.env.HISTORY_RETENTION_COUNT || process.env.MAX_HISTORY_ITEMS || '150'
         ),
     },
+    // --- Step 1: 模拟外部配置数据源 (将来替换为 Supabase) ---
+    ai_config_source: {
+        // 1. 原子 Profile (Variables)
+        profiles: {
+            'grok_fast': {
+                id: 'grok_fast',
+                provider: 'openai',
+                url: 'https://api.openai.com/v1', // Placeholder for Grok
+                key: process.env.CHANNEL_1_KEY || '', // 临时复用 env
+                model: 'grok-beta',
+                timeout: 3000,
+            },
+            'grok_retry': {
+                id: 'grok_retry',
+                provider: 'openai',
+                url: 'https://api.openai.com/v1',
+                key: process.env.CHANNEL_1_KEY || '',
+                model: 'grok-beta',
+                timeout: 10000,
+            },
+            'gemini_flash': {
+                id: 'gemini_flash',
+                provider: 'openai',
+                url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                key: process.env.CHANNEL_2_KEY || '',
+                model: 'gemini-1.5-flash',
+                timeout: 5000,
+            },
+            'deepseek_v3': {
+                id: 'deepseek_v3',
+                provider: 'openai',
+                url: 'https://api.deepseek.com',
+                key: process.env.CHANNEL_3_KEY || '',
+                model: 'deepseek-chat',
+                timeout: 10000,
+            }
+        },
+        // 2. 通道 Pipeline (Sequence)
+        pipelines: {
+            'channel_1': ['grok_fast', 'gemini_flash', 'grok_retry'],
+            'channel_2': ['gemini_flash', 'gemini_flash', 'grok_retry'],
+            'channel_3': ['deepseek_v3', 'deepseek_v3', 'grok_retry'],
+        },
+        // 3. 业务策略 (Mapping)
+        tier_mapping: {
+            'basic': 'channel_1',
+            'standard': 'channel_2',
+            'premium': 'channel_3',
+        } as Record<string, string>
+    }
 };
 
 export default config;

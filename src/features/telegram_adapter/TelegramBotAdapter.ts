@@ -1,8 +1,11 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { SimpleChat } from '../chat/usecases/SimpleChat.js';
+import { ChannelRegistry } from '../../infrastructure/ai/ChannelRegistry.js';
+import { SessionManager } from '../session/usecases/SessionManager.js'; // Import SessionManager
 import config from '../../platform/config.js';
 import { logger } from '../../platform/logger.js';
 import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
+import { UIHandler } from './UIHandler.js'; // Import UIHandler
 
 const COMPONENT = 'TelegramBot';
 
@@ -17,6 +20,7 @@ const COMPONENT = 'TelegramBot';
 export class TelegramBotAdapter {
     private bot: TelegramBot;
     private simpleChat: SimpleChat;
+    private sessionManager: SessionManager; // Add SessionManager
     private isPolling: boolean = false;
     private processedMessageIds: Set<number> = new Set();
     private readonly MAX_PROCESSED_IDS = 1000;
@@ -35,7 +39,11 @@ export class TelegramBotAdapter {
             polling: false,
             request: requestOptions,
         }); // 先不自动开启 polling
-        this.simpleChat = new SimpleChat();
+        
+        // Initialize dependencies
+        const channelRegistry = new ChannelRegistry();
+        this.simpleChat = new SimpleChat(channelRegistry);
+        this.sessionManager = new SessionManager(); // Initialize SessionManager
     }
 
     /**
@@ -51,6 +59,7 @@ export class TelegramBotAdapter {
         
         // 注册事件处理
         this.bot.on('message', this._handleMessage.bind(this));
+        this.bot.on('callback_query', this._handleCallbackQuery.bind(this)); // Register callback handler
         this.bot.on('polling_error', (error) => {
             logger.error({ kind: 'sys', component: COMPONENT, message: 'Polling error', error });
         });
@@ -119,7 +128,16 @@ export class TelegramBotAdapter {
                 return;
             }
 
-            // 2. 普通对话处理
+            // 2. 菜单处理
+            if (text === '⚙️ 设置') {
+                await this._handleSettings(chatId);
+                return;
+            } else if (text === '❓ 帮助') {
+                await this._handleHelp(chatId);
+                return;
+            }
+
+            // 3. 普通对话处理
             const startTime = Date.now();
             try {
                 // 发送 "typing" 状态，提升用户体验
@@ -187,11 +205,13 @@ export class TelegramBotAdapter {
 
         switch (command) {
             case '/start':
-                await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。");
+                await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。", {
+                    reply_markup: UIHandler.createMainMenuKeyboard()
+                });
                 break;
             
             case '/help':
-                await this.bot.sendMessage(chatId, "可用指令：\n/start - 开始\n/help - 帮助");
+                await this._handleHelp(chatId);
                 break;
 
             default:
@@ -199,5 +219,97 @@ export class TelegramBotAdapter {
                 await this.bot.sendMessage(chatId, "未知指令。发送 /help 查看帮助。");
                 break;
         }
+    }
+
+    private async _handleHelp(chatId: string): Promise<void> {
+        const helpText = `❓ **帮助中心**
+
+📚 **功能说明：**
+
+💬 **对话功能**
+• 直接发送消息与AI角色对话
+
+⚙️ **设置**
+• 点击“⚙️ 设置” 可切换AI回复模式（快餐/剧情）
+
+💡 更多功能开发中，敬请期待...`;
+        
+        await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+    }
+
+    private async _handleSettings(chatId: string): Promise<void> {
+        const currentMode = await this.sessionManager.getUserModelMode(chatId);
+        
+        let modeText = "🎦 中级模型B";
+        if (currentMode === 'fast') modeText = "🍔 基础模型";
+        if (currentMode === 'story') modeText = "📖 中级模型A";
+
+        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
+        
+        await this.bot.sendMessage(chatId, text, {
+            parse_mode: 'Markdown',
+            reply_markup: UIHandler.createSettingsKeyboard(currentMode)
+        });
+    }
+
+    private async _handleCallbackQuery(query: TelegramBot.CallbackQuery): Promise<void> {
+        if (!query.data) return;
+        const chatId = query.message?.chat.id.toString();
+        if (!chatId) return;
+
+        const action = query.data.split(':')[0];
+        const params = query.data.split(':').slice(1);
+
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Callback received', meta: { action, params } });
+
+        try {
+            switch (action) {
+                case 'settings_main':
+                    await this._updateSettingsMessage(query);
+                    break;
+                
+                case 'settings_model_select':
+                    const currentMode = await this.sessionManager.getUserModelMode(chatId);
+                    await this.bot.editMessageText("请选择要切换的模型", {
+                        chat_id: chatId,
+                        message_id: query.message?.message_id,
+                        reply_markup: UIHandler.createModelSelectionKeyboard(currentMode)
+                    });
+                    break;
+
+                case 'set_mode':
+                    const newMode = params[0];
+                    await this.sessionManager.setUserModelMode(chatId, newMode);
+                    await this.bot.answerCallbackQuery(query.id, { text: `✅ 已切换为：${newMode}` });
+                    await this._updateSettingsMessage(query);
+                    break;
+
+                case 'close_settings':
+                    await this.bot.deleteMessage(chatId, query.message?.message_id!);
+                    break;
+            }
+        } catch (error) {
+            logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
+            await this.bot.answerCallbackQuery(query.id, { text: '操作失败，请重试' });
+        }
+    }
+
+    private async _updateSettingsMessage(query: TelegramBot.CallbackQuery): Promise<void> {
+        const chatId = query.message?.chat.id.toString();
+        if (!chatId) return;
+
+        const currentMode = await this.sessionManager.getUserModelMode(chatId);
+        let modeText = "🎦 中级模型B";
+        if (currentMode === 'fast') modeText = "🍔 基础模型";
+        if (currentMode === 'story') modeText = "📖 中级模型A";
+
+        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
+
+        await this.bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: query.message?.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: UIHandler.createSettingsKeyboard(currentMode)
+        });
     }
 }

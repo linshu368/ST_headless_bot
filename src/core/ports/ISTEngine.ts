@@ -16,6 +16,12 @@ export interface ISTEngine {
     loadContext(contextData: STContextData): Promise<void>;
 
     /**
+     * Update engine configuration at runtime
+     * @param config Partial configuration to update
+     */
+    setConfiguration(config: Record<string, any>): Promise<void>;
+
+    /**
      * Trigger a generation request
      * @param prompt User input
      * @returns The generated message object (ST format) or null

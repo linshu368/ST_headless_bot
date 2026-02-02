@@ -12,6 +12,7 @@
  * 分类标签 (kind):
  * - biz: 业务日志 (Usecase 层) - 用于还原用户行为
  * - sys: 系统日志 (Adapter 层) - 用于定位 Bug
+ * - infra: 基础设施日志 (Infrastructure 层) - 用于监控资源和连接
  */
 
 import winston from 'winston';
@@ -23,7 +24,7 @@ import config from './config.js';
 // ============ 类型定义 ============
 
 /** 日志分类 */
-export type LogKind = 'biz' | 'sys';
+export type LogKind = 'biz' | 'sys' | 'infra';
 
 /** 日志元数据 */
 export interface LogMeta {

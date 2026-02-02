@@ -23,20 +23,15 @@ export interface ChatSession {
     engine: STEngineAdapter;
     history: OpenAIMessage[];
     character: any; // ST V2 Spec
-    lastActive: number;
 }
 
 /**
  * Session Manager (Layer 2 Service)
  * Responsibilities:
- * 1. Maintain active sessions in memory
- * 2. Handle session lifecycle (Creation, Retrieval, Destruction)
- * 3. Enforce LRU or Timeout policies
+ * 1. Handle session lifecycle (Creation, Retrieval)
+ * 2. Interact with SessionStore (Redis) for persistence
  */
 export class SessionManager {
-    private sessions: Map<string, ChatSession> = new Map();
-    private readonly SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-    private cleanupInterval: NodeJS.Timeout;
     private sessionStore: SessionStore | null = null;
 
     constructor() {
@@ -51,23 +46,21 @@ export class SessionManager {
         } else {
             logger.info({ kind: 'biz', component: COMPONENT, message: 'Redis store disabled' });
         }
-        // Start cleanup job
-        this.cleanupInterval = setInterval(() => this._cleanupStaleSessions(), 60 * 1000);
     }
 
     /**
-     * Get an existing session or create a new one
+     * Get session data from Redis and reconstruct the session object
      */
     async getOrCreateSession(userId: string): Promise<ChatSession> {
-        // [Modified] 1. Always fetch latest state from Redis (Source of Truth)
-        let redisSessionId: string | null = null;
-        let redisHistory: OpenAIMessage[] = [];
+        logger.debug({ kind: 'biz', component: COMPONENT, message: 'Resolving session from store' });
+        let existingSessionId: string | null = null;
+        let existingHistory: OpenAIMessage[] = [];
         
         if (this.sessionStore) {
             try {
-                redisSessionId = await this.sessionStore.getCurrentSessionId(userId);
-                if (redisSessionId) {
-                    redisHistory = await this.sessionStore.getMessages(redisSessionId);
+                existingSessionId = await this.sessionStore.getCurrentSessionId(userId);
+                if (existingSessionId) {
+                    existingHistory = await this.sessionStore.getMessages(existingSessionId);
                 }
             } catch (error) {
                 logger.warn({
@@ -79,27 +72,7 @@ export class SessionManager {
             }
         }
 
-        // 2. Check memory cache for Engine/Config reuse
-        let session = this.sessions.get(userId);
-
-        if (session) {
-            // Update session state from Redis
-            if (redisSessionId) {
-                session.sessionId = redisSessionId;
-                session.history = redisHistory;
-                session.lastActive = Date.now();
-                return session;
-            } else {
-                // Redis session expired or missing -> Force recreate to restore default state (e.g. First Message)
-                logger.info({ kind: 'biz', component: COMPONENT, message: 'Redis session missing, recreating', meta: { userId } });
-                session = undefined;
-            }
-        }
-
-        // 3. Create new session if needed (using Redis data if available, or fresh defaults)
-        logger.info({ kind: 'biz', component: COMPONENT, message: 'Creating new session' });
-        session = await this._createSession(userId, redisSessionId, redisHistory);
-        this.sessions.set(userId, session);
+        const session = await this._createSession(userId, existingSessionId, existingHistory);
         return session;
     }
 
@@ -175,15 +148,18 @@ export class SessionManager {
         }
 
         const sessionId = existingSessionId || `sess_${userId}_${Date.now()}`;
-        logger.info({ 
-            kind: 'biz', 
-            component: COMPONENT, 
-            message: 'Session created', 
-            meta: { sessionId, characterName: character.name } 
-        });
+        if (!existingSessionId) {
+             logger.info({ 
+                kind: 'biz', 
+                component: COMPONENT, 
+                message: 'Session created', 
+                meta: { sessionId, characterName: character.name } 
+            });
+        }
 
         if (this.sessionStore) {
             try {
+                // Only set these if it's a new session or we want to ensure consistency
                 await this.sessionStore.setCurrentSessionId(userId, sessionId);
                 await this.sessionStore.setLastSessionId(userId, sessionId);
                 await this.sessionStore.setSessionData(sessionId, {
@@ -191,8 +167,8 @@ export class SessionManager {
                     user_id: userId,
                     character_name: character.name,
                 });
-                if (history.length > 0) {
-                    await this.sessionStore.setMessages(sessionId, history);
+                if (history.length > 0 && (!existingHistory || existingHistory.length === 0)) {
+                     await this.sessionStore.setMessages(sessionId, history);
                 }
             } catch (error) {
                 logger.warn({
@@ -209,52 +185,48 @@ export class SessionManager {
             userId,
             engine,
             history,
-            character,
-            lastActive: Date.now()
+            character
         };
     }
 
-    /**
-     * Cleanup idle sessions to prevent memory leaks
-     */
-    private _cleanupStaleSessions(): void {
-        const now = Date.now();
-        for (const [userId, session] of this.sessions.entries()) {
-            if (now - session.lastActive > this.SESSION_TIMEOUT_MS) {
-                logger.info({ 
-                    kind: 'biz', 
-                    component: COMPONENT, 
-                    message: 'Cleaning up stale session', 
-                    meta: { userId, sessionId: session.sessionId, idleMinutes: Math.round((now - session.lastActive) / 60000) } 
-                });
-                // Optional: session.engine.destroy() if implemented
-                this.sessions.delete(userId);
+    async appendMessages(session: ChatSession, messages: OpenAIMessage[]): Promise<void> {
+        if (messages.length === 0) return;
+        session.history.push(...messages);
+
+        if (!this.sessionStore) {
+            return;
+        }
+
+        try {
+            for (const message of messages) {
+                await this.sessionStore.appendMessage(session.sessionId, message);
             }
+        } catch (error) {
+            logger.warn({
+                kind: 'biz',
+                component: COMPONENT,
+                message: 'Failed to persist session history',
+                error,
+            });
         }
     }
 
+    async getUserModelMode(userId: string): Promise<string> {
+        if (!this.sessionStore) return 'immersive';
+        try {
+            return await this.sessionStore.getUserModelMode(userId);
+        } catch (error) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to get user model mode', error });
+            return 'immersive';
+        }
+    }
 
-    async appendMessages(session: ChatSession, messages: OpenAIMessage[]): Promise<void> {
-        if (messages.length === 0) return;
-
-        // [Modified] 1. Write to Redis ONLY (Source of Truth)
-        // Memory update is removed because next read will enforce Redis state.
-        if (this.sessionStore) {
-            try {
-                for (const message of messages) {
-                    await this.sessionStore.appendMessage(session.sessionId, message);
-                }
-            } catch (error) {
-                logger.warn({
-                    kind: 'biz',
-                    component: COMPONENT,
-                    message: 'Failed to persist session history',
-                    error,
-                });
-                // Critical: If Redis fails, we do NOT update memory. 
-                // We accept that data is lost to avoid "ghost data" that disappears on next fetch.
-                throw error; // Let the caller handle the failure UI
-            }
+    async setUserModelMode(userId: string, mode: string): Promise<void> {
+        if (!this.sessionStore) return;
+        try {
+            await this.sessionStore.setUserModelMode(userId, mode as 'fast' | 'story' | 'immersive');
+        } catch (error) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to set user model mode', error });
         }
     }
 }

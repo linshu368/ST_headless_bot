@@ -4,6 +4,9 @@ import {
     createInitialStreamScheduleState,
 } from '../rules/streamingSchedule.js';
 import { logger } from '../../../platform/logger.js';
+import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
+import { resolveChannelId, mapLegacyModeToTier } from '../domain/ModelStrategy.js';
+import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -12,14 +15,16 @@ const COMPONENT = 'SimpleChat';
  * 职责：
  * 1. 协调 SessionManager 获取会话
  * 2. 处理用户输入
- * 3. 调用 Engine 执行生成
+ * 3. [Changed] 委托 Channel 执行生成
  * 4. 更新历史记录
  */
 export class SimpleChat {
     private sessionManager: SessionManager;
+    private channelRegistry: IChannelRegistry;
 
-    constructor() {
+    constructor(channelRegistry: IChannelRegistry) {
         this.sessionManager = new SessionManager();
+        this.channelRegistry = channelRegistry;
     }
     
     /**
@@ -199,7 +204,31 @@ export class SimpleChat {
         let scheduleState = createInitialStreamScheduleState();
 
         try {
-            const stream = session.engine.generateStream(userInput);
+            // 1. Resolve User Preference -> Tier -> Channel
+            const userMode = await this.sessionManager.getUserModelMode(userId);
+            const tier = mapLegacyModeToTier(userMode);
+            const channelId = resolveChannelId(tier);
+            const channel = this.channelRegistry.getChannel(channelId);
+
+            if (!channel) {
+                const error = new Error(`Channel configuration error: ${channelId} not found`);
+                logger.error({ kind: 'biz', component: COMPONENT, message: 'Channel resolution failed', error, meta: { userMode, tier, channelId } });
+                throw error;
+            }
+
+            logger.info({ 
+                kind: 'biz', 
+                component: COMPONENT, 
+                message: 'Starting generation via channel', 
+                meta: { tier, channelId } 
+            });
+
+            // 2. Delegate to Channel
+            // Pass engine (for configuration) and userInput
+            const stream = channel.streamGenerate(historySnapshot, { 
+                engine: session.engine, 
+                userInput: userInput 
+            });
 
             for await (const chunk of stream) {
                 if (!chunk) continue;
