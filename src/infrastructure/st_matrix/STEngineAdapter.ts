@@ -61,6 +61,13 @@ export class STEngineAdapter implements ISTEngine {
         if (config.main_api) {
             this._syncMainApi();
         }
+
+        // [Fix] Sync config to Network Handler (FetchInterceptor)
+        // PipelineChannel sends config here, but FetchInterceptor holds a stale copy in its closure.
+        // We need to explicitly update it.
+        if (this.networkHandler.setConfig) {
+            this.networkHandler.setConfig(config);
+        }
     }
 
     /**

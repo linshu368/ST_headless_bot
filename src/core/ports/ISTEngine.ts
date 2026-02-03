@@ -47,5 +47,6 @@ export interface ISTNetworkHandler {
     setMockData?(data: any): void;
     setStreamMode?(enabled: boolean): void;
     setStreamSink?(sink: any | null): void;
+    setConfig?(config: any): void;
 }
 

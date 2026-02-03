@@ -24,6 +24,7 @@ export interface FetchInterceptor extends Function {
     setMockData: (data: Partial<MockState>) => void;
     setStreamMode?: (enabled: boolean) => void;
     setStreamSink?: (sink: StreamSink | null) => void;
+    setConfig?: (config: FetchInterceptorConfig) => void;
 }
 
 export interface StreamSink {
@@ -50,6 +51,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     let mockSecretIdCounter = 0;
     let streamModeEnabled = false;
     let streamSink: StreamSink | null = null;
+    let currentConfig: FetchInterceptorConfig = { ...config };
 
     const interceptor = (async (url: string | URL | Request, options: any = {}): Promise<Response | any> => {
         const urlStr = url.toString();
@@ -169,11 +171,11 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
         if (normalizedUrl === '/api/backends/chat-completions/generate') {
             logger.info({ kind: 'sys', component: COMPONENT, message: 'Intercepted chat generation request' });
             try {
-                // Determine Configuration (Env vars take precedence over ST config)
-                // Use globalConfig for sensitive credentials
-                const apiKey = globalConfig.openai.apiKey || config.api_key_openai;
-                const apiUrl = globalConfig.openai.apiUrl || config.api_url_openai || 'https://api.openai.com/v1';
-                const model = globalConfig.openai.model || config.openai_model;
+                // Determine Configuration (Dynamic config takes precedence over Global/Env config)
+                // This allows PipelineChannel to switch profiles effectively
+                const apiKey = currentConfig.api_key_openai || globalConfig.openai.apiKey;
+                const apiUrl = currentConfig.api_url_openai || globalConfig.openai.apiUrl || 'https://api.openai.com/v1';
+                const model = currentConfig.openai_model || globalConfig.openai.model;
 
                 const baseUrl = apiUrl.replace(/\/$/, '');
                 const targetUrl = baseUrl.endsWith('/chat/completions')
@@ -397,6 +399,11 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
 
     interceptor.setStreamSink = (sink: StreamSink | null) => {
         streamSink = sink;
+    };
+
+    interceptor.setConfig = (newConfig: FetchInterceptorConfig) => {
+        logger.debug({ kind: 'sys', component: COMPONENT, message: 'Updating FetchInterceptor config', meta: { newConfig } });
+        currentConfig = { ...currentConfig, ...newConfig };
     };
 
     return interceptor;
