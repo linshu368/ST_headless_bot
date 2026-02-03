@@ -1,6 +1,7 @@
 import type { IChannelRegistry } from '../../features/chat/ports/IChannelRegistry.js';
 import type { IAIChannel } from '../../features/chat/ports/IAIChannel.js';
-import { PipelineChannel, type AIProfileConfig } from './channels/PipelineChannel.js';
+import { PipelineChannel } from './channels/PipelineChannel.js';
+import type { AIProfileConfig } from '../../types/config.js';
 import config from '../../platform/config.js';
 import { logger } from '../../platform/logger.js';
 
@@ -14,21 +15,19 @@ export class ChannelRegistry implements IChannelRegistry {
     private initializeChannels() {
         try {
             // 从 Config Source (将来是 Supabase) 加载配置
-            const { profiles, pipelines } = config.ai_config_source;
+            const channels = config.ai_config_source.channels;
 
             // 动态组装 PipelineChannel
-            for (const [pipelineId, stepIds] of Object.entries(pipelines)) {
-                // 解析原子 Profile，过滤无效 ID
-                const steps: AIProfileConfig[] = stepIds
-                    .map(id => profiles[id])
-                    .filter(Boolean);
-
-                if (steps.length > 0) {
-                    this.channels.set(pipelineId, new PipelineChannel(pipelineId, steps));
-                    logger.info({ kind: 'infra', component: 'ChannelRegistry', message: `Registered pipeline: ${pipelineId} with ${steps.length} steps` });
-                } else {
-                    logger.warn({ kind: 'infra', component: 'ChannelRegistry', message: `Skipping empty pipeline: ${pipelineId}` });
+            for (const [channelId, steps] of Object.entries(channels)) {
+                // 1. 验证数据完整性 (简单的运行时检查)
+                if (!Array.isArray(steps) || steps.length === 0) {
+                    logger.warn({ kind: 'infra', component: 'ChannelRegistry', message: `Skipping empty channel: ${channelId}` });
+                    continue;
                 }
+
+                // 2. 直接实例化 PipelineChannel
+                this.channels.set(channelId, new PipelineChannel(channelId, steps));
+                logger.info({ kind: 'infra', component: 'ChannelRegistry', message: `Registered channel: ${channelId} with ${steps.length} steps` });
             }
         } catch (error) {
             logger.error({ kind: 'infra', component: 'ChannelRegistry', message: 'Failed to initialize channels', error });

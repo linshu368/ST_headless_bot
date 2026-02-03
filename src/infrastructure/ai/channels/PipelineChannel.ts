@@ -1,16 +1,8 @@
+import type { AIProfileConfig } from '../../../types/config.js';
 import type { IAIChannel } from '../../../features/chat/ports/IAIChannel.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { logger } from '../../../platform/logger.js';
 
-export interface AIProfileConfig {
-    id: string;
-    provider: string;
-    url: string;
-    key: string;
-    model: string;
-    timeout?: number;
-    // 其他可能需要的参数，如 temperature 等
-}
 
 export class PipelineChannel implements IAIChannel {
     constructor(

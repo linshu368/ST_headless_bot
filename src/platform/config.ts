@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import type { AIChannelConfig, TierMappingConfig } from '../types/config.js';
 
 // Load environment variables from .env file
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -35,9 +36,8 @@ export interface Config {
         historyRetentionCount: number;
     };
     ai_config_source: {
-        profiles: Record<string, any>;
-        pipelines: Record<string, string[]>;
-        tier_mapping: Record<string, string>;
+        channels: AIChannelConfig;
+        tier_mapping: TierMappingConfig;
     };
 }
 
@@ -77,53 +77,93 @@ const config: Config = {
     },
     // --- Step 1: 模拟外部配置数据源 (将来替换为 Supabase) ---
     ai_config_source: {
-        // 1. 原子 Profile (Variables) - 使用抽象 ID
-        profiles: {
-            'profile_1': {
-                id: 'profile_1',
-                provider: 'openai',
-                url: 'https://aifuturekey.xyz/v1/chat/completions',
-                key: process.env.PROFILE_1_KEY || '',
-                model: 'grok-4-fast-non-reasoning',
-                timeout: 3000,
-            },
-            'profile_2': {
-                id: 'profile_2',
-                provider: 'openai',
-                url: 'https://openrouter.ai/api/v1/chat/completions',
-                key: process.env.PROFILE_2_KEY || '',
-                model: 'google/gemini-3-flash-preview',
-                timeout: 10000,
-            },
-            'profile_3': {
-                id: 'profile_3',
-                provider: 'openai',
-                url: 'https://openrouter.ai/api/v1/chat/completions',
-                key: process.env.PROFILE_3_KEY || '',
-                model: 'deepseek/deepseek-chat-v3.1',
-                timeout: 5000,
-            },
-            'profile_4': {
-                id: 'profile_4',
-                provider: 'openai',
-                url: 'https://api.siliconflow.cn/v1/chat/completions',
-                key: process.env.PROFILE_4_KEY || '',
-                model: 'Pro/deepseek-ai/DeepSeek-V3.1-Terminus',
-                timeout: 10000,
-            }
+        // 1. 通道配置表 (模拟 Supabase 'ai_channels' 表)
+        channels: {
+            'channel_1': [
+                {
+                    id: 'step_1',
+                    provider: 'openai',
+                    url: 'https://aifuturekey.xyz/v1/chat/completions',
+                    key: process.env.PROFILE_1_KEY || '',
+                    model: 'grok-4-fast-non-reasoning',
+                    timeout: 3000,
+                },
+                {
+                    id: 'step_2',
+                    provider: 'openai',
+                    url: 'https://openrouter.ai/api/v1/chat/completions',
+                    key: process.env.PROFILE_3_KEY || '',
+                    model: 'deepseek/deepseek-chat-v3.1',
+                    timeout: 5000,
+                },
+                {
+                    id: 'step_3',
+                    provider: 'openai',
+                    url: 'https://openrouter.ai/api/v1/chat/completions',
+                    key: process.env.PROFILE_2_KEY || '',
+                    model: 'google/gemini-3-flash-preview',
+                    timeout: 10000,
+                }
+            ],
+            'channel_2': [
+                {
+                    id: 'step_1',
+                    provider: 'openai',
+                    url: 'https://openrouter.ai/api/v1/chat/completions',
+                    key: process.env.PROFILE_3_KEY || '',
+                    model: 'deepseek/deepseek-chat-v3.1',
+                    timeout: 5000,
+                },
+                {
+                    id: 'step_2',
+                    provider: 'openai',
+                    url: 'https://openrouter.ai/api/v1/chat/completions',
+                    key: process.env.PROFILE_3_KEY || '',
+                    model: 'deepseek/deepseek-chat-v3.1',
+                    timeout: 5000,
+                },
+                {
+                    id: 'step_3',
+                    provider: 'openai',
+                    url: 'https://openrouter.ai/api/v1/chat/completions',
+                    key: process.env.PROFILE_2_KEY || '',
+                    model: 'google/gemini-3-flash-preview',
+                    timeout: 10000,
+                }
+            ],
+            'channel_3': [
+                {
+                    id: 'step_1',
+                    provider: 'openai',
+                    url: 'https://api.siliconflow.cn/v1/chat/completions',
+                    key: process.env.PROFILE_4_KEY || '',
+                    model: 'Pro/deepseek-ai/DeepSeek-V3.1-Terminus',
+                    timeout: 10000,
+                },
+                {
+                    id: 'step_2',
+                    provider: 'openai',
+                    url: 'https://api.siliconflow.cn/v1/chat/completions',
+                    key: process.env.PROFILE_4_KEY || '',
+                    model: 'Pro/deepseek-ai/DeepSeek-V3.1-Terminus',
+                    timeout: 10000,
+                },
+                {
+                    id: 'step_3',
+                    provider: 'openai',
+                    url: 'https://openrouter.ai/api/v1/chat/completions',
+                    key: process.env.PROFILE_2_KEY || '',
+                    model: 'google/gemini-3-flash-preview',
+                    timeout: 10000,
+                }
+            ]
         },
-        // 2. 通道 Pipeline (Sequence)
-        pipelines: {
-            'channel_1': ['profile_1', 'profile_3', 'profile_2'],
-            'channel_2': ['profile_3', 'profile_3', 'profile_2'],
-            'channel_3': ['profile_4', 'profile_4', 'profile_2'],
-        },
-        // 3. 业务策略 (Mapping) - 使用新枚举值
+        // 2. 映射表 (模拟 Supabase 'tier_mapping' 表)
         tier_mapping: {
             'basic': 'channel_1',
             'standard_a': 'channel_2',
             'standard_b': 'channel_3',
-        } as Record<string, string>
+        }
     }
 };
 
