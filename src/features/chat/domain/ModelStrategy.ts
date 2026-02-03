@@ -5,9 +5,9 @@
 
 // 1. 定义产品等级 (Product Tiers) - 业务语言
 export enum ModelTier {
-    BASIC = 'basic',       // 基础版
-    STANDARD = 'standard', // 进阶版 (原 Story)
-    PREMIUM = 'premium',   // 旗舰版 (原 Immersive)
+    BASIC = 'basic',       // 基础模型
+    STANDARD_A = 'standard_a', // 中级模型A
+    STANDARD_B = 'standard_b', // 中级模型B
 }
 
 // 2. 配置映射表：Tier -> Channel ID
@@ -24,21 +24,24 @@ export function resolveChannelId(tier: ModelTier): string {
 }
 
 /**
- * 规则：兼容旧系统的 mode 字符串映射到新的 Tier
+ * 规则：将展示名称/工程语义映射到 Tier
  */
 export function mapLegacyModeToTier(legacyMode: string): ModelTier {
     // 归一化处理
     const mode = legacyMode?.toLowerCase().trim();
     
     switch (mode) {
-        case 'fast':
+        case 'basic':
+        case '基础模型':
             return ModelTier.BASIC;
-        case 'story':
-            return ModelTier.STANDARD;
-        case 'immersive':
-            return ModelTier.PREMIUM;
+        case 'standard_a':
+        case '中级模型a':
+            return ModelTier.STANDARD_A;
+        case 'standard_b':
+        case '中级模型b':
+            return ModelTier.STANDARD_B;
         default:
-            // 未知模式默认为旗舰版
-            return ModelTier.PREMIUM;
+            // 未知模式默认为中级模型B
+            return ModelTier.STANDARD_B;
     }
 }

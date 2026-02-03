@@ -1,11 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { SimpleChat } from '../chat/usecases/SimpleChat.js';
 import { ChannelRegistry } from '../../infrastructure/ai/ChannelRegistry.js';
-import { SessionManager } from '../session/usecases/SessionManager.js'; // Import SessionManager
+import { SessionManager } from '../session/usecases/SessionManager.js';
+import { ModelTier } from '../chat/domain/ModelStrategy.js';
 import config from '../../platform/config.js';
 import { logger } from '../../platform/logger.js';
 import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
-import { UIHandler } from './UIHandler.js'; // Import UIHandler
+import { UIHandler } from './UIHandler.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -240,9 +241,10 @@ export class TelegramBotAdapter {
     private async _handleSettings(chatId: string): Promise<void> {
         const currentMode = await this.sessionManager.getUserModelMode(chatId);
         
-        let modeText = "🎦 中级模型B";
-        if (currentMode === 'fast') modeText = "🍔 基础模型";
-        if (currentMode === 'story') modeText = "📖 中级模型A";
+        let modeText = "🎦 中级模型B (默认)";
+        if (currentMode === ModelTier.BASIC) modeText = "🍔 基础模型";
+        if (currentMode === ModelTier.STANDARD_A) modeText = "📖 中级模型A";
+        if (currentMode === ModelTier.STANDARD_B) modeText = "🎦 中级模型B";
 
         const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
         
@@ -280,7 +282,7 @@ export class TelegramBotAdapter {
                 case 'set_mode':
                     const newMode = params[0];
                     await this.sessionManager.setUserModelMode(chatId, newMode);
-                    await this.bot.answerCallbackQuery(query.id, { text: `✅ 已切换为：${newMode}` });
+                    await this.bot.answerCallbackQuery(query.id, { text: `✅ 已切换为：${this._getModelDisplayName(newMode)}` });
                     await this._updateSettingsMessage(query);
                     break;
 
@@ -299,9 +301,10 @@ export class TelegramBotAdapter {
         if (!chatId) return;
 
         const currentMode = await this.sessionManager.getUserModelMode(chatId);
-        let modeText = "🎦 中级模型B";
-        if (currentMode === 'fast') modeText = "🍔 基础模型";
-        if (currentMode === 'story') modeText = "📖 中级模型A";
+        let modeText = "🎦 中级模型B (默认)";
+        if (currentMode === ModelTier.BASIC) modeText = "🍔 基础模型";
+        if (currentMode === ModelTier.STANDARD_A) modeText = "📖 中级模型A";
+        if (currentMode === ModelTier.STANDARD_B) modeText = "🎦 中级模型B";
 
         const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
 
@@ -311,5 +314,12 @@ export class TelegramBotAdapter {
             parse_mode: 'Markdown',
             reply_markup: UIHandler.createSettingsKeyboard(currentMode)
         });
+    }
+
+    private _getModelDisplayName(mode: string): string {
+        if (mode === ModelTier.BASIC) return '基础模型';
+        if (mode === ModelTier.STANDARD_A) return '中级模型A';
+        if (mode === ModelTier.STANDARD_B) return '中级模型B';
+        return '中级模型B';
     }
 }

@@ -77,52 +77,52 @@ const config: Config = {
     },
     // --- Step 1: 模拟外部配置数据源 (将来替换为 Supabase) ---
     ai_config_source: {
-        // 1. 原子 Profile (Variables)
+        // 1. 原子 Profile (Variables) - 使用抽象 ID
         profiles: {
-            'grok_fast': {
-                id: 'grok_fast',
+            'profile_1': {
+                id: 'profile_1',
                 provider: 'openai',
-                url: 'https://api.openai.com/v1', // Placeholder for Grok
-                key: process.env.CHANNEL_1_KEY || '', // 临时复用 env
-                model: 'grok-beta',
+                url: 'https://aifuturekey.xyz/v1/chat/completions',
+                key: process.env.PROFILE_1_KEY || '',
+                model: 'grok-4-fast-non-reasoning',
                 timeout: 3000,
             },
-            'grok_retry': {
-                id: 'grok_retry',
+            'profile_2': {
+                id: 'profile_2',
                 provider: 'openai',
-                url: 'https://api.openai.com/v1',
-                key: process.env.CHANNEL_1_KEY || '',
-                model: 'grok-beta',
+                url: 'https://openrouter.ai/api/v1/chat/completions',
+                key: process.env.PROFILE_2_KEY || '',
+                model: 'google/gemini-3-flash-preview',
                 timeout: 10000,
             },
-            'gemini_flash': {
-                id: 'gemini_flash',
+            'profile_3': {
+                id: 'profile_3',
                 provider: 'openai',
-                url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-                key: process.env.CHANNEL_2_KEY || '',
-                model: 'gemini-1.5-flash',
+                url: 'https://openrouter.ai/api/v1/chat/completions',
+                key: process.env.PROFILE_3_KEY || '',
+                model: 'deepseek/deepseek-chat-v3.1',
                 timeout: 5000,
             },
-            'deepseek_v3': {
-                id: 'deepseek_v3',
+            'profile_4': {
+                id: 'profile_4',
                 provider: 'openai',
-                url: 'https://api.deepseek.com',
-                key: process.env.CHANNEL_3_KEY || '',
-                model: 'deepseek-chat',
+                url: 'https://api.siliconflow.cn/v1/chat/completions',
+                key: process.env.PROFILE_4_KEY || '',
+                model: 'Pro/deepseek-ai/DeepSeek-V3.1-Terminus',
                 timeout: 10000,
             }
         },
         // 2. 通道 Pipeline (Sequence)
         pipelines: {
-            'channel_1': ['grok_fast', 'gemini_flash', 'grok_retry'],
-            'channel_2': ['gemini_flash', 'gemini_flash', 'grok_retry'],
-            'channel_3': ['deepseek_v3', 'deepseek_v3', 'grok_retry'],
+            'channel_1': ['profile_1', 'profile_3', 'profile_2'],
+            'channel_2': ['profile_3', 'profile_3', 'profile_2'],
+            'channel_3': ['profile_4', 'profile_4', 'profile_2'],
         },
-        // 3. 业务策略 (Mapping)
+        // 3. 业务策略 (Mapping) - 使用新枚举值
         tier_mapping: {
             'basic': 'channel_1',
-            'standard': 'channel_2',
-            'premium': 'channel_3',
+            'standard_a': 'channel_2',
+            'standard_b': 'channel_3',
         } as Record<string, string>
     }
 };

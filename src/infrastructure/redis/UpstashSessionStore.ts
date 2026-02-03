@@ -348,30 +348,30 @@ export class UpstashSessionStore implements SessionStore {
         await this.cmd('set', key, data as unknown as string);
     }
 
-    async getUserModelMode(userId: string): Promise<'fast' | 'story' | 'immersive'> {
+    async getUserModelMode(userId: string): Promise<'basic' | 'standard_a' | 'standard_b'> {
         const key = this.keyUserModelMode(userId);
         try {
             const result = await this.cmd('get', key);
             const value = this.decodeGetResult(result);
-            if (value === 'fast' || value === 'story' || value === 'immersive') {
+            if (value === 'basic' || value === 'standard_a' || value === 'standard_b') {
                 return value;
             }
             if (value && typeof value === 'object') {
                 const obj = value as Record<string, unknown>;
                 const inner = obj.value ?? obj.result;
-                if (inner === 'fast' || inner === 'story' || inner === 'immersive') {
+                if (inner === 'basic' || inner === 'standard_a' || inner === 'standard_b') {
                     return inner;
                 }
             }
-            return 'immersive';
+            return 'standard_b';
         } catch {
-            return 'immersive';
+            return 'standard_b';
         }
     }
 
     async setUserModelMode(
         userId: string,
-        mode: 'fast' | 'story' | 'immersive'
+        mode: 'basic' | 'standard_a' | 'standard_b'
     ): Promise<void> {
         const key = this.keyUserModelMode(userId);
         await this.cmd('set', key, mode);

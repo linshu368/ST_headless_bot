@@ -212,19 +212,19 @@ export class SessionManager {
     }
 
     async getUserModelMode(userId: string): Promise<string> {
-        if (!this.sessionStore) return 'immersive';
+        if (!this.sessionStore) return 'standard_b';
         try {
             return await this.sessionStore.getUserModelMode(userId);
         } catch (error) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to get user model mode', error });
-            return 'immersive';
+            return 'standard_b';
         }
     }
 
     async setUserModelMode(userId: string, mode: string): Promise<void> {
         if (!this.sessionStore) return;
         try {
-            await this.sessionStore.setUserModelMode(userId, mode as 'fast' | 'story' | 'immersive');
+            await this.sessionStore.setUserModelMode(userId, mode as 'basic' | 'standard_a' | 'standard_b');
         } catch (error) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to set user model mode', error });
         }

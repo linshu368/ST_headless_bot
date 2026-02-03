@@ -16,6 +16,6 @@ export interface SessionStore {
     getSessionData(sessionId: string): Promise<Record<string, unknown> | null>;
     setSessionData(sessionId: string, data: Record<string, unknown>): Promise<void>;
 
-    getUserModelMode(userId: string): Promise<'fast' | 'story' | 'immersive'>;
-    setUserModelMode(userId: string, mode: 'fast' | 'story' | 'immersive'): Promise<void>;
+    getUserModelMode(userId: string): Promise<'basic' | 'standard_a' | 'standard_b'>;
+    setUserModelMode(userId: string, mode: 'basic' | 'standard_a' | 'standard_b'): Promise<void>;
 }

@@ -15,10 +15,12 @@ export class UIHandler {
 
     static createSettingsKeyboard(currentMode: string): TelegramBot.InlineKeyboardMarkup {
         let modeText = "🎦 中级模型B (默认)";
-        if (currentMode === 'fast' || currentMode === ModelTier.BASIC) {
+        if (currentMode === ModelTier.BASIC) {
             modeText = "🍔 基础模型";
-        } else if (currentMode === 'story' || currentMode === ModelTier.STANDARD) {
+        } else if (currentMode === ModelTier.STANDARD_A) {
             modeText = "📖 中级模型A";
+        } else if (currentMode === ModelTier.STANDARD_B) {
+            modeText = "🎦 中级模型B";
         }
 
         return {
@@ -30,15 +32,15 @@ export class UIHandler {
     }
 
     static createModelSelectionKeyboard(currentMode: string): TelegramBot.InlineKeyboardMarkup {
-        const isBasic = currentMode === 'fast' || currentMode === ModelTier.BASIC;
-        const isStandard = currentMode === 'story' || currentMode === ModelTier.STANDARD;
-        const isPremium = currentMode === 'immersive' || currentMode === ModelTier.PREMIUM;
+        const isBasic = currentMode === ModelTier.BASIC;
+        const isStandardA = currentMode === ModelTier.STANDARD_A;
+        const isStandardB = currentMode === ModelTier.STANDARD_B || (!isBasic && !isStandardA);
 
         return {
             inline_keyboard: [
-                [{ text: `🎦 中级模型B${isPremium ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.PREMIUM}` }],
+                [{ text: `🎦 中级模型B${isStandardB ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD_B}` }],
                 [{ text: `🍔 基础模型${isBasic ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.BASIC}` }],
-                [{ text: `📖 中级模型A${isStandard ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD}` }],
+                [{ text: `📖 中级模型A${isStandardA ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD_A}` }],
                 [{ text: "🔙 返回", callback_data: "settings_main" }]
             ]
         };
