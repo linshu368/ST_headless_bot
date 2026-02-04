@@ -158,6 +158,87 @@ export class SimpleChat {
 
         const session = await this.sessionManager.getOrCreateSession(userId);
 
+        // 使用通用生成器
+        let accumulatedText = '';
+        for await (const update of this._executeStreamGeneration(session, userInput, userId)) {
+            if (update.isFinal) {
+                accumulatedText = update.text;
+            }
+            yield update;
+        }
+
+        // 保存历史 (Chat 特有: 追加 User + Bot)
+        if (accumulatedText) {
+            await this.sessionManager.appendMessages(session, [
+                {
+                    role: 'user',
+                    content: userInput
+                },
+                {
+                    role: 'assistant',
+                    content: accumulatedText
+                }
+            ]);
+        }
+    }
+
+    /**
+     * 重新生成回复
+     * @param userId Telegram 用户ID
+     * @returns 流式增量文本
+     */
+    async *streamRegenerate(userId: string): AsyncGenerator<{
+        text: string;
+        isFirst: boolean;
+        isFinal: boolean;
+        firstResponseMs?: number;
+    }> {
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Regenerating chat started' });
+
+        const session = await this.sessionManager.getOrCreateSession(userId);
+
+        // 1. 回滚历史到最后一条用户消息
+        const lastUserContent = await this.sessionManager.rollbackHistoryToLastUser(session);
+        
+        if (!lastUserContent) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Regenerate failed: No user message found' });
+            yield { 
+                text: "无法重新生成：找不到上一条用户消息。", 
+                isFirst: true, 
+                isFinal: true 
+            };
+            return;
+        }
+
+        // 2. 使用通用生成器 (使用回滚后的用户输入)
+        let accumulatedText = '';
+        for await (const update of this._executeStreamGeneration(session, lastUserContent, userId)) {
+             if (update.isFinal) {
+                accumulatedText = update.text;
+            }
+            yield update;
+        }
+
+        // 3. 保存历史 (Regenerate 特有: 只追加 Bot，因为 User 已经在回滚后的历史里了)
+        if (accumulatedText) {
+            await this.sessionManager.appendMessages(session, [
+                {
+                    role: 'assistant',
+                    content: accumulatedText
+                }
+            ]);
+        }
+    }
+
+    /**
+     * 通用流式生成逻辑 (Private)
+     */
+    private async *_executeStreamGeneration(session: any, userInput: string, userId: string): AsyncGenerator<{
+        text: string;
+        isFirst: boolean;
+        isFinal: boolean;
+        firstResponseMs?: number;
+    }> {
         const previewHistory = (history: OpenAIMessage[], limit = 3) => {
             const tail = history.slice(-limit);
             return tail.map((m) => ({
@@ -169,6 +250,7 @@ export class SimpleChat {
         const lastBeforeInject = session.history[session.history.length - 1];
         const lastIsSameUserInput =
             lastBeforeInject?.role === 'user' && lastBeforeInject?.content === userInput;
+        
         logger.debug({ 
             kind: 'biz', 
             component: COMPONENT, 
@@ -182,16 +264,7 @@ export class SimpleChat {
         });
 
         const historySnapshot = JSON.parse(JSON.stringify(session.history));
-        logger.debug({ 
-            kind: 'biz', 
-            component: COMPONENT, 
-            message: 'Injecting history into engine', 
-            meta: {
-                length: historySnapshot.length,
-                tail: previewHistory(historySnapshot),
-            }
-        });
-
+        
         await session.engine.loadContext({
             characters: [session.character],
             chat: historySnapshot
@@ -204,7 +277,7 @@ export class SimpleChat {
         let scheduleState = createInitialStreamScheduleState();
 
         try {
-            // 1. Resolve User Preference -> Tier -> Channel
+            // Resolve User Preference -> Tier -> Channel
             const userMode = await this.sessionManager.getUserModelMode(userId);
             const tier = mapLegacyModeToTier(userMode);
             const channelId = resolveChannelId(tier);
@@ -223,8 +296,7 @@ export class SimpleChat {
                 meta: { tier, channelId } 
             });
 
-            // 2. Delegate to Channel
-            // Pass engine (for configuration) and userInput
+            // Delegate to Channel
             const stream = channel.streamGenerate(historySnapshot, { 
                 engine: session.engine, 
                 userInput: userInput 
@@ -255,12 +327,11 @@ export class SimpleChat {
                 }
             }
         } catch (error) {
-            // 关键：完整暴露错误信息，然后向上抛出
             logger.error({ 
                 kind: 'biz', 
                 component: COMPONENT, 
                 message: 'Streaming generation failed', 
-                error  // 传入原始错误对象
+                error
             });
             throw error;
         }
@@ -283,17 +354,6 @@ export class SimpleChat {
         }
 
         if (accumulatedText) {
-            await this.sessionManager.appendMessages(session, [
-                {
-                    role: 'user',
-                    content: userInput
-                },
-                {
-                    role: 'assistant',
-                    content: accumulatedText
-                }
-            ]);
-            
             logger.info({ 
                 kind: 'biz', 
                 component: COMPONENT, 

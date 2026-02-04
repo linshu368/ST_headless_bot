@@ -211,6 +211,71 @@ export class SessionManager {
         }
     }
 
+    /**
+     * Rollback session history to the last user message.
+     * This ensures the next generation starts fresh from the last user input,
+     * removing any previous (potentially bad) bot responses.
+     * 
+     * @param session The chat session to rollback
+     * @returns The content of the last user message to be regenerated
+     */
+    async rollbackHistoryToLastUser(session: ChatSession): Promise<string | null> {
+        // 1. Find the index of the last user message in the current in-memory history
+        let lastUserIndex = -1;
+        for (let i = session.history.length - 1; i >= 0; i--) {
+            if (session.history[i].role === 'user') {
+                lastUserIndex = i;
+                break;
+            }
+        }
+
+        if (lastUserIndex === -1) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'No user message found to rollback to' });
+            return null;
+        }
+
+        const lastUserMessage = session.history[lastUserIndex];
+        const lastUserContent = typeof lastUserMessage.content === 'string' 
+            ? lastUserMessage.content 
+            : String(lastUserMessage.content);
+
+        // 2. Truncate in-memory history
+        // We keep everything up to and including the user message.
+        // The bot's new response will be appended after this.
+        session.history = session.history.slice(0, lastUserIndex + 1);
+
+        logger.info({ 
+            kind: 'biz', 
+            component: COMPONENT, 
+            message: 'History rolled back', 
+            meta: { 
+                sessionId: session.sessionId, 
+                lastUserIndex, 
+                keptCount: session.history.length 
+            } 
+        });
+
+        // 3. Sync with Redis
+        if (this.sessionStore) {
+            try {
+                // We overwrite the full list to ensure consistency.
+                // This avoids race conditions with RPOP/LTRIM and handles complex history states.
+                // Since this is a manual user action, the cost of SET is acceptable.
+                await this.sessionStore.setMessages(session.sessionId, session.history);
+            } catch (error) {
+                logger.error({
+                    kind: 'biz',
+                    component: COMPONENT,
+                    message: 'Failed to persist rolled back history',
+                    error,
+                });
+                // We proceed even if persistence fails, though it might lead to inconsistency on next reload
+            }
+        }
+
+        return lastUserContent;
+    }
+
     async getUserModelMode(userId: string): Promise<string> {
         if (!this.sessionStore) return 'standard_b';
         try {

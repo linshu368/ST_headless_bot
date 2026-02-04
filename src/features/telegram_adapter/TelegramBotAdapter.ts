@@ -211,6 +211,13 @@ export class TelegramBotAdapter {
                         message: 'Chat completed', 
                         meta: { replyLength: lastText.length, latencyMs } 
                     });
+
+                    // 编辑最终消息，添加“重新生成”按钮
+                    await this.bot.editMessageText(lastText, {
+                        chat_id: msg.chat.id,
+                        message_id: placeholder.message_id,
+                        reply_markup: UIHandler.createRegenerateKeyboard(placeholder.message_id)
+                    });
                 }
 
             } catch (error) {
@@ -319,6 +326,57 @@ export class TelegramBotAdapter {
 
                 case 'close_settings':
                     await this.bot.deleteMessage(chatId, query.message?.message_id!);
+                    break;
+
+                case 'regenerate':
+                    const originalMessageId = query.message?.message_id;
+                    if (!originalMessageId) return;
+
+                    // 1. 移除旧消息的按钮
+                    await this.bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+                        chat_id: chatId,
+                        message_id: originalMessageId
+                    });
+
+                    // 2. 发送新消息 Placeholder
+                    const placeholder = await this.bot.sendMessage(chatId, '✍️ 重新生成中...');
+                    let lastText = '';
+                    const startTime = Date.now();
+
+                    try {
+                         // 3. 执行重新生成逻辑
+                        for await (const update of this.simpleChat.streamRegenerate(chatId)) {
+                            if (!update.text || update.text.trim().length === 0 || update.text === lastText) continue;
+
+                            await this.bot.editMessageText(update.text, {
+                                chat_id: chatId,
+                                message_id: placeholder.message_id
+                            });
+                            lastText = update.text;
+                        }
+
+                        if (!lastText) {
+                            await this.bot.editMessageText("重新生成失败 (空内容)", {
+                                chat_id: chatId,
+                                message_id: placeholder.message_id
+                            });
+                        } else {
+                            // 4. 完成后添加按钮
+                            await this.bot.editMessageText(lastText, {
+                                chat_id: chatId,
+                                message_id: placeholder.message_id,
+                                reply_markup: UIHandler.createRegenerateKeyboard(placeholder.message_id)
+                            });
+                        }
+                    } catch (error) {
+                         logger.error({ kind: 'biz', component: COMPONENT, message: 'Regenerate flow failed', error });
+                         await this.bot.editMessageText("重新生成遇到错误，请稍后再试。", {
+                            chat_id: chatId,
+                            message_id: placeholder.message_id
+                        });
+                    }
+                    
+                    await this.bot.answerCallbackQuery(query.id);
                     break;
             }
         } catch (error) {
