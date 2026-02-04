@@ -37,9 +37,23 @@ export class TelegramBotAdapter {
 
         // 创建 Bot 实例 (Polling 模式)
         this.bot = new TelegramBot(token, {
-            polling: false,
+            polling: { autoStart: false }, // 明确禁止自动启动，完全由 start() 控制
             request: requestOptions,
-        }); // 先不自动开启 polling
+        });
+        
+        // 关键防御：在实例创建后立即监听错误，防止未捕获的 Polling 异常导致进程崩溃
+        this.bot.on('polling_error', (error) => {
+            // 忽略常见的网络中断错误，让库自动重试
+            if (error.message.includes('ECONNRESET') || error.message.includes('ETIMEDOUT') || error.message.includes('socket disconnected')) {
+                logger.warn({ kind: 'sys', component: COMPONENT, message: 'Network instability detected (auto-recovering)', error: error.message });
+            } else {
+                logger.error({ kind: 'sys', component: COMPONENT, message: 'Polling fatal error', error });
+            }
+        });
+
+        this.bot.on('error', (error) => {
+             logger.error({ kind: 'sys', component: COMPONENT, message: 'General bot error', error });
+        });
         
         // Initialize dependencies
         const channelRegistry = new ChannelRegistry();
@@ -61,11 +75,16 @@ export class TelegramBotAdapter {
         // 注册事件处理
         this.bot.on('message', this._handleMessage.bind(this));
         this.bot.on('callback_query', this._handleCallbackQuery.bind(this)); // Register callback handler
-        this.bot.on('polling_error', (error) => {
-            logger.error({ kind: 'sys', component: COMPONENT, message: 'Polling error', error });
-        });
+        // Note: polling_error is already registered in constructor
 
-        await this.bot.startPolling();
+        await this.bot.startPolling({
+            restart: true, // 允许自动重启 polling
+            polling: {
+                params: {
+                    timeout: 10 // 长轮询超时时间 (秒)
+                }
+            }
+        });
         this.isPolling = true;
         logger.info({ kind: 'sys', component: COMPONENT, message: 'Service is online' });
     }
@@ -148,7 +167,19 @@ export class TelegramBotAdapter {
                 let lastText = '';
 
                 for await (const update of this.simpleChat.streamChat(chatId, text)) {
-                    if (!update.text || update.text === lastText) continue;
+                    // Debug: Log raw update from LLM to investigate empty text issues
+                    logger.info({
+                        kind: 'biz',
+                        component: COMPONENT,
+                        message: 'Raw stream update received',
+                        meta: { 
+                            rawText: update.text, 
+                            textLength: update.text?.length,
+                            isFirst: update.isFirst
+                        }
+                    });
+
+                    if (!update.text || update.text.trim().length === 0 || update.text === lastText) continue;
 
                     if (update.isFirst && update.firstResponseMs !== undefined) {
                         logger.info({ 

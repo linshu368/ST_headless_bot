@@ -39,6 +39,10 @@ export interface Config {
         channels: AIChannelConfig;
         tier_mapping: TierMappingConfig;
     };
+    timeouts: {
+        interChunk: number;
+        total: number;
+    };
 }
 
 const config: Config = {
@@ -74,6 +78,10 @@ const config: Config = {
         historyRetentionCount: Number(
             process.env.HISTORY_RETENTION_COUNT || process.env.MAX_HISTORY_ITEMS || '150'
         ),
+    },
+    timeouts: {
+        interChunk: Number(process.env.AI_STREAM_INTER_CHUNK_TIMEOUT || '3000'),
+        total: Number(process.env.AI_STREAM_TOTAL_TIMEOUT || '15000'),
     },
     // --- Step 1: 模拟外部配置数据源 (将来替换为 Supabase) ---
     ai_config_source: {

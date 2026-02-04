@@ -2,6 +2,7 @@ import type { AIProfileConfig } from '../../../types/config.js';
 import type { IAIChannel } from '../../../features/chat/ports/IAIChannel.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { logger } from '../../../platform/logger.js';
+import config from '../../../platform/config.js';
 
 
 export class PipelineChannel implements IAIChannel {
@@ -9,6 +10,113 @@ export class PipelineChannel implements IAIChannel {
         private pipelineId: string,
         private steps: AIProfileConfig[]
     ) {}
+
+    /**
+     * Stage 1/2/3 Timeout Managed Stream
+     */
+    private async *managedStream(
+        stream: AsyncIterable<string>,
+        ttftMs: number,
+        interChunkMs: number,
+        totalMs: number,
+        meta: any
+    ): AsyncGenerator<string> {
+        const startTime = Date.now();
+        let hasReceivedFirstToken = false;
+        
+        // Use a wrapper to iterate the stream so we can race it
+        const iterator = stream[Symbol.asyncIterator]();
+
+        try {
+            while (true) {
+                const now = Date.now();
+                const elapsed = now - startTime;
+                const remainingTotal = totalMs - elapsed;
+                
+                // Stage 3: Total Timeout Check (Start of loop)
+                if (remainingTotal <= 0) {
+                    logger.warn({
+                        kind: 'infra',
+                        component: 'PipelineChannel',
+                        message: 'Stream ended due to Total Timeout (Start)',
+                        meta: { ...meta, duration: elapsed }
+                    });
+                    return;
+                }
+
+                // Determine deadline based on state
+                // Stage 1 (TTFT) or Stage 2 (Inter-chunk)
+                const stepTimeoutMs = hasReceivedFirstToken ? interChunkMs : ttftMs;
+                
+                // The effective timeout is the minimum of the step timeout and the remaining total time
+                // This ensures Total Timeout interrupts a long pending chunk
+                const effectiveTimeoutMs = Math.min(stepTimeoutMs, remainingTotal);
+                
+                let timer: NodeJS.Timeout;
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => {
+                        reject(new Error('TIMEOUT_RACE'));
+                    }, effectiveTimeoutMs);
+                });
+
+                try {
+                    // Race: Next Chunk vs Timeout
+                    const result = await Promise.race([iterator.next(), timeoutPromise]);
+                    clearTimeout(timer!);
+
+                    if (result.done) {
+                        break;
+                    }
+
+                    hasReceivedFirstToken = true;
+                    yield result.value;
+
+                } catch (error: any) {
+                    clearTimeout(timer!);
+
+                    if (error.message === 'TIMEOUT_RACE') {
+                        // Determine which timeout triggered
+                        // If the remaining total time was the constraint (or close to it), it's a Total Timeout
+                        // Re-calculate to be sure (allow 10ms buffer for execution time)
+                        const currentElapsed = Date.now() - startTime;
+                        const isTotalTimeout = currentElapsed >= totalMs - 10; 
+
+                        if (isTotalTimeout) {
+                             // Stage 3: Total Timeout -> Success (Truncate)
+                             logger.warn({
+                                kind: 'infra',
+                                component: 'PipelineChannel',
+                                message: 'Stream ended due to Total Timeout (Race)',
+                                meta: { ...meta, duration: currentElapsed }
+                            });
+                            return;
+                        }
+                        
+                        // Otherwise it was Step Timeout
+                        if (!hasReceivedFirstToken) {
+                            // Stage 1: TTFT Failure -> Throw to trigger retry
+                            throw new Error(`TTFT timeout exceeded (${ttftMs}ms)`);
+                        } else {
+                            // Stage 2: Inter-chunk Timeout -> Success (Truncate)
+                            logger.warn({
+                                kind: 'infra',
+                                component: 'PipelineChannel',
+                                message: 'Stream ended due to Inter-chunk Timeout',
+                                meta
+                            });
+                            return;
+                        }
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+        } finally {
+            if (iterator.return) {
+                await iterator.return();
+            }
+        }
+    }
 
     async *streamGenerate(messages: any[], context: any): AsyncGenerator<string> {
         const engine = context.engine as ISTEngine;
@@ -40,17 +148,29 @@ export class PipelineChannel implements IAIChannel {
                     // 还可以设置 timeout 等
                 });
 
-                // 2. 执行生成 (TODO: 实现 First Token Timeout)
-                // 目前暂时直接调用，后续可以通过 FetchInterceptor 或封装 generateStream 实现超时控制
-                const stream = engine.generateStream(userInput);
+                // 2. 执行生成 (Wrapped with 3-Stage Timeout)
+                const rawStream = engine.generateStream(userInput);
+                
+                // Get timeouts from config/profile
+                const ttftMs = profile.timeout || 7000; // Default 7s if not set
+                const interChunkMs = config.timeouts.interChunk;
+                const totalMs = config.timeouts.total;
+
+                const managed = this.managedStream(
+                    rawStream, 
+                    ttftMs, 
+                    interChunkMs, 
+                    totalMs,
+                    { pipelineId: this.pipelineId, profileId: profile.id }
+                );
 
                 let hasYielded = false;
-                for await (const chunk of stream) {
+                for await (const chunk of managed) {
                     hasYielded = true;
                     yield chunk;
                 }
 
-                // 如果流正常结束，则成功退出 Pipeline
+                // 如果流正常结束（包括被截断的情况），则成功退出 Pipeline
                 if (hasYielded) {
                     logger.info({ 
                         kind: 'infra', 
@@ -60,7 +180,7 @@ export class PipelineChannel implements IAIChannel {
                     });
                     return;
                 } else {
-                    // 如果流没内容，视为失败（除非这就是预期行为？）
+                    // 如果流没内容（比如刚连上就断了，且没抛 TTFT），视为失败
                     throw new Error("Empty response stream");
                 }
 
