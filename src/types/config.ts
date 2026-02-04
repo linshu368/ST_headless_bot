@@ -4,7 +4,8 @@ export interface AIProfileConfig {
     url: string;         // 完整 API Endpoint
     key: string;         // API Key
     model: string;       // 模型名称
-    timeout?: number;    // 超时设置 (ms)
+    firstchunk_timeout?: number; // 首个 token 超时 (ms)
+    total_timeout?: number;      // 总超时 (ms)
 }
 
 export type AIChannelConfig = Record<string, AIProfileConfig[]>;

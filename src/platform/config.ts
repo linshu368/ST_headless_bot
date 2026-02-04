@@ -94,7 +94,8 @@ const config: Config = {
                     url: 'https://aifuturekey.xyz/v1/chat/completions',
                     key: process.env.PROFILE_1_KEY || '',
                     model: 'grok-4-fast-non-reasoning',
-                    timeout: 3000,
+                    firstchunk_timeout: 3000,
+                    total_timeout: 15000,
                 },
                 {
                     id: 'step_2',
@@ -102,7 +103,8 @@ const config: Config = {
                     url: 'https://openrouter.ai/api/v1/chat/completions',
                     key: process.env.PROFILE_3_KEY || '',
                     model: 'deepseek/deepseek-chat-v3.1',
-                    timeout: 5000,
+                    firstchunk_timeout: 5000,
+                    total_timeout: 15000,
                 },
                 {
                     id: 'step_3',
@@ -110,7 +112,8 @@ const config: Config = {
                     url: 'https://openrouter.ai/api/v1/chat/completions',
                     key: process.env.PROFILE_2_KEY || '',
                     model: 'google/gemini-3-flash-preview',
-                    timeout: 10000,
+                    firstchunk_timeout: 10000,
+                    total_timeout: 15000,
                 }
             ],
             'channel_2': [
@@ -120,7 +123,8 @@ const config: Config = {
                     url: 'https://openrouter.ai/api/v1/chat/completions',
                     key: process.env.PROFILE_3_KEY || '',
                     model: 'deepseek/deepseek-chat-v3.1',
-                    timeout: 5000,
+                    firstchunk_timeout: 5000,
+                    total_timeout: 15000,
                 },
                 {
                     id: 'step_2',
@@ -128,7 +132,8 @@ const config: Config = {
                     url: 'https://openrouter.ai/api/v1/chat/completions',
                     key: process.env.PROFILE_3_KEY || '',
                     model: 'deepseek/deepseek-chat-v3.1',
-                    timeout: 5000,
+                    firstchunk_timeout: 5000,
+                    total_timeout: 15000,
                 },
                 {
                     id: 'step_3',
@@ -136,7 +141,8 @@ const config: Config = {
                     url: 'https://openrouter.ai/api/v1/chat/completions',
                     key: process.env.PROFILE_2_KEY || '',
                     model: 'google/gemini-3-flash-preview',
-                    timeout: 10000,
+                    firstchunk_timeout: 10000,
+                    total_timeout: 15000,
                 }
             ],
             'channel_3': [
@@ -146,7 +152,8 @@ const config: Config = {
                     url: 'https://api.siliconflow.cn/v1/chat/completions',
                     key: process.env.PROFILE_4_KEY || '',
                     model: 'Pro/deepseek-ai/DeepSeek-V3.1-Terminus',
-                    timeout: 10000,
+                    firstchunk_timeout: 10000,
+                    total_timeout: 15000,
                 },
                 {
                     id: 'step_2',
@@ -154,7 +161,8 @@ const config: Config = {
                     url: 'https://api.siliconflow.cn/v1/chat/completions',
                     key: process.env.PROFILE_4_KEY || '',
                     model: 'Pro/deepseek-ai/DeepSeek-V3.1-Terminus',
-                    timeout: 10000,
+                    firstchunk_timeout: 10000,
+                    total_timeout: 15000,
                 },
                 {
                     id: 'step_3',
@@ -162,7 +170,8 @@ const config: Config = {
                     url: 'https://openrouter.ai/api/v1/chat/completions',
                     key: process.env.PROFILE_2_KEY || '',
                     model: 'google/gemini-3-flash-preview',
-                    timeout: 10000,
+                    firstchunk_timeout: 10000,
+                    total_timeout: 15000,
                 }
             ]
         },

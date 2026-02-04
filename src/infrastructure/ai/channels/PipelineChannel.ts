@@ -152,9 +152,9 @@ export class PipelineChannel implements IAIChannel {
                 const rawStream = engine.generateStream(userInput);
                 
                 // Get timeouts from config/profile
-                const ttftMs = profile.timeout || 7000; // Default 7s if not set
+                const ttftMs = profile.firstchunk_timeout || 7000; // Default 7s if not set
                 const interChunkMs = config.timeouts.interChunk;
-                const totalMs = config.timeouts.total;
+                const totalMs = profile.total_timeout || 15000;
 
                 const managed = this.managedStream(
                     rawStream, 
