@@ -1,12 +1,12 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
 
-ROLE_LIBRARY_FILENAME = "role_library(2).json"
+ROLE_LIBRARY_FILENAME = "character_v2.json"
 
 
 def load_roles(file_path: Path) -> List[Dict[str, Any]]:
@@ -19,14 +19,46 @@ def save_roles(file_path: Path, roles: List[Dict[str, Any]]) -> None:
         json.dump(roles, target, ensure_ascii=False, indent=2)
 
 
+def extract_role_id_and_extensions(role: Dict[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    data = role.get("data")
+    if isinstance(data, dict):
+        extensions = data.get("extensions")
+        if isinstance(extensions, dict):
+            role_id = extensions.get("role_id")
+            if role_id is not None:
+                return str(role_id), extensions
+            return None, extensions
+    return None, None
+
+
 def count_roles_without_deeplink(roles: List[Dict[str, Any]]) -> int:
-    return sum(1 for role in roles if "deeplink" not in role)
+    missing_count = 0
+
+    for role in roles:
+        role_id, extensions = extract_role_id_and_extensions(role)
+        if role_id is not None:
+            if not extensions or not extensions.get("deeplink"):
+                missing_count += 1
+            continue
+
+        if "deeplink" not in role:
+            missing_count += 1
+
+    return missing_count
 
 
 def ensure_deeplink_field(roles: List[Dict[str, Any]], bot_username: str) -> int:
     updated_count = 0
 
     for role in roles:
+        role_id, extensions = extract_role_id_and_extensions(role)
+        if role_id is not None and extensions is not None:
+            deeplink = f"https://t.me/{bot_username}?start=role_{role_id}"
+            if extensions.get("deeplink") != deeplink:
+                extensions["deeplink"] = deeplink
+                updated_count += 1
+            continue
+
         role_id = role.get("role_id")
         if not role_id:
             continue
@@ -56,9 +88,9 @@ def load_env_file() -> None:
 def main() -> None:
     load_env_file()
 
-    bot_username = os.environ.get("BOT_USERNAME")
+    bot_username = os.environ.get("TELEGRAM_BOT_USERNAME")
     if not bot_username:
-        raise EnvironmentError("BOT_USERNAME environment variable is not set.")
+        raise EnvironmentError("BOT_TELEGRAM_BOT_USERNAMEUSERNAME environment variable is not set.")
 
     file_path = Path(__file__).with_name(ROLE_LIBRARY_FILENAME)
 
