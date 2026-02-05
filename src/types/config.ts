@@ -8,6 +8,13 @@ export interface AIProfileConfig {
     total_timeout?: number;      // 总超时 (ms)
 }
 
+export interface InstructionRule {
+    id: string;
+    // condition: Removed as we now use a single system instruction regardless of turn count
+    content: string;
+    position: 'prepend' | 'append';
+}
+
 export type AIChannelConfig = Record<string, AIProfileConfig[]>;
 
 export type TierMappingConfig = Record<string, string>;

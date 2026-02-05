@@ -15,6 +15,9 @@ export interface Config {
             host: string;
             port: number;
         } | null;
+        instruction_enhancement: {
+            system_instructions: string;
+        };
     };
     openai: {
         apiKey: string;
@@ -38,6 +41,7 @@ export interface Config {
     ai_config_source: {
         channels: AIChannelConfig;
         tier_mapping: TierMappingConfig;
+        // instructions: Removed as logic is simplified to single system_instruction
     };
     timeouts: {
         interChunk: number;
@@ -57,6 +61,9 @@ const config: Config = {
                 port: Number(process.env.TELEGRAM_PROXY_PORT),
             }
             : null,
+        instruction_enhancement: {
+            system_instructions: process.env.SYSTEM_INSTRUCTIONS || '请尽量简短回答。',
+        }
     },
     openai: {
         apiKey: process.env.OPENAI_API_KEY || '',
@@ -180,7 +187,7 @@ const config: Config = {
             'basic': 'channel_1',
             'standard_a': 'channel_2',
             'standard_b': 'channel_3',
-        }
+        },
     }
 };
 

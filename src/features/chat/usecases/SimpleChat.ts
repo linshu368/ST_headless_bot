@@ -4,6 +4,7 @@ import {
     createInitialStreamScheduleState,
 } from '../rules/streamingSchedule.js';
 import { logger } from '../../../platform/logger.js';
+import config from '../../../platform/config.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
 import { resolveChannelId, mapLegacyModeToTier } from '../domain/ModelStrategy.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
@@ -92,7 +93,20 @@ export class SimpleChat {
         // Engine 负责：填入 Input -> 触发 Generate -> 拦截网络 -> 返回文本
         let replyText: string;
         try {
-            const rawReply = await session.engine.generate(userInput);
+            // Apply Prompt Injection
+            // Calculate current round (approximate for non-streaming flow)
+            // Note: In standard chat flow we assume it's a new turn
+            const currentTurn = (session.turnCount || 0) + 1;
+            const enhancedInput = this._enhancePrompt(userInput, currentTurn);
+            
+            logger.debug({ 
+                kind: 'biz', 
+                component: COMPONENT, 
+                message: 'Prompt enhanced', 
+                meta: { currentTurn, originalLen: userInput.length, enhancedLen: enhancedInput.length } 
+            });
+
+            const rawReply = await session.engine.generate(enhancedInput);
             
             // Handle ST Message Object vs String
             if (typeof rawReply === 'object' && rawReply !== null && rawReply.mes) {
@@ -289,17 +303,33 @@ export class SimpleChat {
                 throw error;
             }
 
+            // Apply Prompt Injection
+            // Note: For new messages, it's next turn. For regeneration, it's current turn.
+            // But _executeStreamGeneration is generic.
+            // We need to know if this is a "new" turn or "existing" turn (regenerate).
+            // HACK: We can infer this. If userInput matches last user message in history, it's likely a regenerate-like scenario or retry.
+            // But simpler: just trust session.turnCount. 
+            // If it's a new message (streamChat), session.turnCount hasn't incremented yet (it increments in appendMessages).
+            // So for new message: effectiveTurn = session.turnCount + 1
+            // For regenerate: we rolled back, so session.turnCount is still "high"? No, turnCount is persistent counter.
+            // Wait, if we regenerate turn 5, we want to use turn 5 logic.
+            // session.turnCount stores the COMPLETED turns.
+            // So for the turn currently being generated: targetTurn = session.turnCount + 1.
+            
+            const targetTurn = (session.turnCount || 0) + 1;
+            const enhancedInput = this._enhancePrompt(userInput, targetTurn);
+
             logger.info({ 
                 kind: 'biz', 
                 component: COMPONENT, 
                 message: 'Starting generation via channel', 
-                meta: { tier, channelId } 
+                meta: { tier, channelId, targetTurn } 
             });
 
             // Delegate to Channel
             const stream = channel.streamGenerate(historySnapshot, { 
                 engine: session.engine, 
-                userInput: userInput 
+                userInput: enhancedInput 
             });
 
             for await (const chunk of stream) {
@@ -366,8 +396,15 @@ export class SimpleChat {
     }
 
     /**
-     * 调试用：导出当前会话历史
+     * 核心业务逻辑：指令增强 (Prompt Injection)
+     * [Modified] 统一使用 system_instructions，不再根据轮次区分
      */
+    private _enhancePrompt(userInput: string, turnCount: number): string {
+        const { system_instructions } = config.telegram.instruction_enhancement;
+        // 无论轮次如何，统一使用最高优先级的系统指令
+        return `##系统指令：以下为最高优先级指令。\n${system_instructions}\n##用户指令:${userInput}\n`;
+    }
+
     async getHistory(userId: string): Promise<any[]> {
         const session = await this.sessionManager.getOrCreateSession(userId);
         return session.history;

@@ -23,6 +23,7 @@ export interface ChatSession {
     engine: STEngineAdapter;
     history: OpenAIMessage[];
     character: any; // ST V2 Spec
+    turnCount: number;
 }
 
 /**
@@ -55,12 +56,14 @@ export class SessionManager {
         logger.debug({ kind: 'biz', component: COMPONENT, message: 'Resolving session from store' });
         let existingSessionId: string | null = null;
         let existingHistory: OpenAIMessage[] = [];
+        let existingSessionData: Record<string, unknown> | null = null;
         
         if (this.sessionStore) {
             try {
                 existingSessionId = await this.sessionStore.getCurrentSessionId(userId);
                 if (existingSessionId) {
                     existingHistory = await this.sessionStore.getMessages(existingSessionId);
+                    existingSessionData = await this.sessionStore.getSessionData(existingSessionId);
                 }
             } catch (error) {
                 logger.warn({
@@ -72,7 +75,7 @@ export class SessionManager {
             }
         }
 
-        const session = await this._createSession(userId, existingSessionId, existingHistory);
+        const session = await this._createSession(userId, existingSessionId, existingHistory, existingSessionData);
         return session;
     }
 
@@ -82,7 +85,8 @@ export class SessionManager {
     private async _createSession(
         userId: string,
         existingSessionId?: string | null,
-        existingHistory?: OpenAIMessage[]
+        existingHistory?: OpenAIMessage[],
+        existingSessionData?: Record<string, unknown> | null
     ): Promise<ChatSession> {
         // 1. Load Character (Mock Data Source)
         const charPath = path.join(config.st.mockDataPath, 'seraphina_v2.json');
@@ -136,8 +140,14 @@ export class SessionManager {
             ? existingHistory
             : [];
         
-        // Add System Prompt (Optional, ST usually handles this via character card)
-        // history.push({ role: 'system', content: character.description });
+        // Initialize Turn Count
+        let turnCount = 0;
+        if (existingSessionData && typeof existingSessionData.turn_count === 'number') {
+            turnCount = existingSessionData.turn_count;
+        } else if (history.length > 0) {
+            // Fallback for migration: approximate turn count
+            turnCount = Math.floor(history.length / 2);
+        }
 
         // Add First Message
         if (history.length === 0 && character.first_mes) {
@@ -166,6 +176,7 @@ export class SessionManager {
                     session_id: sessionId,
                     user_id: userId,
                     character_name: character.name,
+                    turn_count: turnCount,
                 });
                 if (history.length > 0 && (!existingHistory || existingHistory.length === 0)) {
                      await this.sessionStore.setMessages(sessionId, history);
@@ -185,13 +196,24 @@ export class SessionManager {
             userId,
             engine,
             history,
-            character
+            character,
+            turnCount
         };
     }
 
     async appendMessages(session: ChatSession, messages: OpenAIMessage[]): Promise<void> {
         if (messages.length === 0) return;
         session.history.push(...messages);
+
+        // Update Turn Count
+        const hasUser = messages.some(m => m.role === 'user');
+        const hasAssistant = messages.some(m => m.role === 'assistant');
+        let turnCountUpdated = false;
+
+        if (hasUser && hasAssistant) {
+            session.turnCount += 1;
+            turnCountUpdated = true;
+        }
 
         if (!this.sessionStore) {
             return;
@@ -200,6 +222,14 @@ export class SessionManager {
         try {
             for (const message of messages) {
                 await this.sessionStore.appendMessage(session.sessionId, message);
+            }
+
+            if (turnCountUpdated) {
+                const currentData = await this.sessionStore.getSessionData(session.sessionId) || {};
+                await this.sessionStore.setSessionData(session.sessionId, {
+                    ...currentData,
+                    turn_count: session.turnCount
+                });
             }
         } catch (error) {
             logger.warn({

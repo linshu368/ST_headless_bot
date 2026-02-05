@@ -370,19 +370,21 @@ export class TelegramBotAdapter {
                         }
                     } catch (error) {
                          logger.error({ kind: 'biz', component: COMPONENT, message: 'Regenerate flow failed', error });
+                         // Prevent secondary error if network is down
                          await this.bot.editMessageText("重新生成遇到错误，请稍后再试。", {
                             chat_id: chatId,
                             message_id: placeholder.message_id
-                        });
+                        }).catch(() => {});
                     }
                     
                     await this.bot.answerCallbackQuery(query.id);
                     break;
             }
-        } catch (error) {
-            logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
-            await this.bot.answerCallbackQuery(query.id, { text: '操作失败，请重试' });
-        }
+            } catch (error) {
+                logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
+                // Prevent crash if answerCallbackQuery fails due to network issues
+                await this.bot.answerCallbackQuery(query.id, { text: '操作失败，请重试' }).catch(() => {});
+            }
     }
 
     private async _updateSettingsMessage(query: TelegramBot.CallbackQuery): Promise<void> {
