@@ -27,9 +27,9 @@ export class GptCaller {
 
     constructor(options: GptCallerOptions = {}) {
         this.apiKey = process.env.OPENAI_API_KEY || '';
-        this.apiUrl = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
+        this.apiUrl = process.env.OPENAI_API_URL || '';
         // 运维工具使用配置的模型，优先级: OPS_GPT_MODEL > OPENAI_MODEL > 默认值
-        this.model = options.model || process.env.OPS_GPT_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+        this.model = options.model || process.env.OPENAI_MODEL || 'anthropic/claude-opus-4.5';
         this.timeout = options.timeout || 60000;
 
         if (!this.apiKey) {
