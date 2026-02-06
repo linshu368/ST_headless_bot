@@ -388,6 +388,28 @@ export class STEngineAdapter implements ISTEngine {
                 }
                 return msg;
             });
+
+            // [FIX] Inject First Message into Virtual Chat History
+            // Since SessionManager keeps Redis clean (no first_mes), we must inject it here at runtime.
+            // This ensures the prompt includes the character's opening line.
+            if (win.characters[0] && win.characters[0].data && win.characters[0].data.first_mes) {
+                 const firstMes = win.characters[0].data.first_mes;
+                 // Avoid duplication if it's already there
+                 const firstMsgContent = stHistory.length > 0 && typeof stHistory[0].mes === 'string' ? stHistory[0].mes : '';
+                 
+                 // If history is empty OR first message doesn't match (meaning it's a user message or something else)
+                 if (stHistory.length === 0 || firstMsgContent !== firstMes) {
+                     logger.debug({ kind: 'sys', component: COMPONENT, message: 'Injecting first_mes into virtual history' });
+                     stHistory.unshift({
+                        name: win.characters[0].name,
+                        is_user: false,
+                        is_name: true,
+                        send_date: this._getHumanizedTime(),
+                        mes: firstMes,
+                        force_avatar: ''
+                     });
+                 }
+            }
             
             logger.debug({ 
                 kind: 'sys', 
@@ -411,6 +433,8 @@ export class STEngineAdapter implements ISTEngine {
             // Ensure 'chat_metadata' exists if ST needs it
             if (!win.chat_metadata) win.chat_metadata = {};
             
+            // [REMOVED] Workaround removed. Prompt Manager now handles System Prompt via configuration.
+            /* 
             // [WORKAROUND] Inject System Prompt into Chat History
             // Since PromptManager logic is failing to build the system prompt from settings in the virtual environment,
             // we inject it directly into the chat history as a system message. 
@@ -432,6 +456,7 @@ export class STEngineAdapter implements ISTEngine {
                     });
                 }
             }
+            */
             
             logger.debug({ 
                 kind: 'sys', 

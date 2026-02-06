@@ -6,6 +6,8 @@ import { createFetchInterceptor } from '../../../infrastructure/networking/Fetch
 import { logger } from '../../../platform/logger.js';
 import type { SessionMessage, SessionStore } from '../../../core/ports/SessionStore.js';
 import { UpstashSessionStore } from '../../../infrastructure/redis/UpstashSessionStore.js';
+import { supabase } from '../../../infrastructure/supabase/SupabaseClient.js';
+import { mapDbRowToCharacterV2, type RoleDataRow } from '../../../infrastructure/supabase/CharacterMapper.js';
 
 const COMPONENT = 'SessionManager';
 
@@ -95,7 +97,12 @@ export class SessionManager {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Character file not found', error, meta: { charPath } });
             throw error;
         }
-        const character = JSON.parse(fs.readFileSync(charPath, 'utf-8'));
+        let character = JSON.parse(fs.readFileSync(charPath, 'utf-8'));
+        
+        // Handle V2 Character Card
+        if (character.spec === 'chara_card_v2' && character.data) {
+            character = character.data;
+        }
 
         // 2. Initialize Adapter Chain (Layer 4)
         const networkHandler = createFetchInterceptor({
@@ -113,22 +120,39 @@ export class SessionManager {
             api_key_openai: config.openai.apiKey,
             api_url_openai: config.openai.apiUrl,
             openai_model: config.openai.model,
-            // [CRITICAL] Inject Default OpenAI Settings for Prompt Manager
+            // [CRITICAL] Inject Dynamic OpenAI Settings
+            // This configuration drives the ST Core Prompt Manager to build the prompt exactly as requested:
+            // Part 1: character.system_prompt (via 'main')
+            // Part 2 & 3 & 4: First Message + History + User Input (via 'chatHistory' marker)
             oai_settings: {
                 preset_settings_openai: 'Default',
                 openai_model: config.openai.model || 'gpt-3.5-turbo',
-                system_prompt: 'You are {{char}}. Write a response that stays in character.',
+                system_prompt: character.system_prompt || '', // Fallback for UI display
                 context_template: 'Default',
                 chat_completion_source: 'openai',
                 openai_max_context: 4096,
                 openai_max_tokens: 300,
                 openai_temperature: 0.7,
                 prompts: [
-                    // [DEBUG] Simplified Prompt to test injection
-                    { 'name': 'Debug System', 'system_prompt': true, 'role': 'system', 'content': 'You are Seraphina. This is a debug prompt.', 'identifier': 'debug' }
+                    { 
+                        identifier: 'main', 
+                        name: 'Main Prompt', 
+                        system_prompt: true, 
+                        role: 'system', 
+                        content: character.system_prompt || '', 
+                        enabled: true 
+                    },
+                    { 
+                        identifier: 'chatHistory', 
+                        name: 'Chat History', 
+                        system_prompt: false, 
+                        marker: true,
+                        enabled: true
+                    }
                 ],
                 prompt_order: [
-                    { 'identifier': 'debug', 'enabled': true }
+                    { identifier: 'main', enabled: true },
+                    { identifier: 'chatHistory', enabled: true }
                 ]
             }
         }, networkHandler);
@@ -149,13 +173,8 @@ export class SessionManager {
             turnCount = Math.floor(history.length / 2);
         }
 
-        // Add First Message
-        if (history.length === 0 && character.first_mes) {
-            history.push({
-                role: 'assistant',
-                content: character.first_mes
-            });
-        }
+        // NOTE: We do NOT inject first_mes into history here anymore.
+        // It should be constructed dynamically during prompt assembly to keep Redis clean.
 
         const sessionId = existingSessionId || `sess_${userId}_${Date.now()}`;
         if (!existingSessionId) {

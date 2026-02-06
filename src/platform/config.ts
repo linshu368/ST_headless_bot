@@ -38,6 +38,10 @@ export interface Config {
         maxHistoryItems: number;
         historyRetentionCount: number;
     };
+    supabase: {
+        url: string;
+        key: string;
+    };
     ai_config_source: {
         channels: AIChannelConfig;
         tier_mapping: TierMappingConfig;
@@ -85,6 +89,10 @@ const config: Config = {
         historyRetentionCount: Number(
             process.env.HISTORY_RETENTION_COUNT || process.env.MAX_HISTORY_ITEMS || '150'
         ),
+    },
+    supabase: {
+        url: process.env.SUPABASE_URL || '',
+        key: process.env.SUPABASE_KEY || '',
     },
     timeouts: {
         interChunk: Number(process.env.AI_STREAM_INTER_CHUNK_TIMEOUT || '3000'),

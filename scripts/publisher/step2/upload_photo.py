@@ -1,10 +1,22 @@
 import os
 import time
 from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# 加载环境变量
+# 假设 .env 文件位于项目根目录 (SillyTavern/.env)
+# 脚本位于 SillyTavern/scripts/publisher/step2/upload_photo.py
+# 需要向上回溯 3 级目录
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.env')
+load_dotenv(env_path)
 
 # Supabase配置
-SUPABASE_URL = "https://lhcyrmigpqeloxjrfwmn.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxoY3lybWlncHFlbG94anJmd21uIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzM2MTQxNSwiZXhwIjoyMDY4OTM3NDE1fQ.I9kVX_39mit3nH8Ipzqy9jn59U1sZjQd6YhdPdvd__o"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("❌ 未找到环境变量：请确保 .env 文件中已设置 SUPABASE_URL 和 SUPABASE_KEY")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # 图片文件夹路径 - 使用相对路径
@@ -53,14 +65,14 @@ for i, image_file in enumerate(image_files, 1):
             public_url = supabase.storage.from_("avatar").get_public_url(image_file)
             print(f"🔗 图片的公开URL: {public_url}")
 
-            # 更新role_library表的avatar字段 - 添加重试机制
+            # 更新role_data表的avatar字段 - 添加重试机制
             avatar_url = public_url
             max_retries = 3
             db_updated = False
             
             for attempt in range(max_retries):
                 try:
-                    update_response = supabase.from_("role_library").update({"avatar": avatar_url}).eq("role_id", int(role_id)).execute()
+                    update_response = supabase.from_("role_data").update({"avatar": avatar_url}).eq("role_id", int(role_id)).execute()
                     print(f"✅ 角色ID {role_id} 的头像URL已更新成功")
                     db_updated = True
                     db_update_success += 1

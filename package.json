@@ -28,6 +28,7 @@
         "@jimp/wasm-webp": "^1.6.0",
         "@mozilla/readability": "^0.6.0",
         "@popperjs/core": "^2.11.8",
+        "@supabase/supabase-js": "^2.95.3",
         "@zeldafan0225/ai_horde": "^5.2.0",
         "archiver": "^7.0.1",
         "bing-translate-api": "^4.1.0",
@@ -176,6 +177,7 @@
         "eslint-plugin-jsdoc": "^48.10.0",
         "ts-node": "^10.9.2",
         "tsx": "^4.21.0",
-        "typescript": "^5.9.3"
+        "typescript": "^5.9.3",
+        "vitest": "^0.34.6"
     }
 }

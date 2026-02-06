@@ -19,7 +19,7 @@ if env_path.exists():
 # Supabase 配置
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-SUPABASE_TABLE = os.environ.get("SUPABASE_TABLE", "role_library")
+SUPABASE_TABLE = os.environ.get("SUPABASE_TABLE", "role_data")
 
 # Telegram 配置
 ROLE_CHANNEL_URL = os.environ.get("ROLE_CHANNEL_URL", "")
@@ -45,9 +45,10 @@ if PROXY_RAW:
         PROXY_PORT = None
         PROXY_TYPE = "socks5"
 else:
-    PROXY_HOST = ""
-    PROXY_PORT = None
-    PROXY_TYPE = "socks5"
+    # 尝试读取 TELEGRAM_PROXY_ 前缀的变量
+    PROXY_HOST = os.environ.get("TELEGRAM_PROXY_HOST", "")
+    PROXY_PORT = int(os.environ.get("TELEGRAM_PROXY_PORT", "0")) or None
+    PROXY_TYPE = os.environ.get("TELEGRAM_PROXY_SCHEME", "socks5")
 
 CHECK_INTERVAL_MINUTES = float(os.environ.get("CHECK_INTERVAL_MINUTES", "15"))
 PUBLISH_INTERVAL_SECONDS = int(os.environ.get("PUBLISH_INTERVAL_SECONDS", "30"))
@@ -69,11 +70,11 @@ def get_unpublished_roles(supabase: Client) -> List[Dict[str, Any]]:
             supabase
             .table(SUPABASE_TABLE)
             .select("*")
-            .is_("created_at", None)
+            .is_("published_at", None)
             .execute()
         )
         roles = response.data or []
-        unpublished_roles = [role for role in roles if not role.get("created_at")]
+        unpublished_roles = [role for role in roles if not role.get("published_at")]
         if len(unpublished_roles) != len(roles):
             print(f"ℹ️ 过滤掉 {len(roles) - len(unpublished_roles)} 个已发布角色")
         print(f"📋 从 Supabase 获取到 {len(unpublished_roles)} 个未发布角色")
@@ -87,7 +88,7 @@ def update_role_published_status(supabase: Client, role_id: int, post_link: str)
     """更新角色的发布状态到 Supabase"""
     try:
         response = supabase.table(SUPABASE_TABLE).update({
-            "created_at": datetime.now().isoformat(),
+            "published_at": datetime.now().isoformat(),
             "post_link": post_link
         }).eq("role_id", role_id).execute()
         
@@ -149,7 +150,8 @@ async def resolve_avatar_to_direct_url(client: TelegramClient, avatar_url: str) 
 
 
 def build_caption(role: Dict[str, Any]) -> str:
-    name = role.get("name", "角色")
+    # 映射调整: 使用 title 替代 name
+    name = role.get("title") or role.get("name", "角色")
     summary = role.get("summary", "")
     tags = role.get("tags", [])
     deeplink = role.get("deeplink", "")
@@ -175,11 +177,11 @@ async def publish_role(client: TelegramClient, channel: str, role: Dict[str, Any
         if direct_url:
             # 发送带图片的消息
             message = await client.send_file(channel, direct_url, caption=caption, parse_mode='md')
-            print(f"📸 使用图片发布: {role.get('name', '未知')}")
+            print(f"📸 使用图片发布: {role.get('title', '未知')}")
         else:
             # 降级为纯文本
             message = await client.send_message(channel, caption, parse_mode='md')
-            print(f"📝 降级为纯文本发布: {role.get('name', '未知')}")
+            print(f"📝 降级为纯文本发布: {role.get('title', '未知')}")
         
         # 更新角色数据到 Supabase
         channel_username = channel.lstrip('@')
@@ -188,14 +190,14 @@ async def publish_role(client: TelegramClient, channel: str, role: Dict[str, Any
         
         update_success = False
         if role_id and update_role_published_status(supabase, role_id, post_link):
-            print(f"✅ 发布角色 '{role.get('name', '未知')}' 完成，post_link: {post_link}")
+            print(f"✅ 发布角色 '{role.get('title', '未知')}' 完成，post_link: {post_link}")
             update_success = True
         else:
-            print(f"⚠️ 角色 '{role.get('name', '未知')}' 发布成功但状态更新失败")
+            print(f"⚠️ 角色 '{role.get('title', '未知')}' 发布成功但状态更新失败")
         
         return update_success
     except Exception as e:
-        print(f"❌ 发布角色 '{role.get('name', '未知')}' 失败: {e}")
+        print(f"❌ 发布角色 '{role.get('title', '未知')}' 失败: {e}")
         return False
 
 

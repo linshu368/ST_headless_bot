@@ -71,22 +71,21 @@ export class SimpleChat {
 
         // 4. 同步状态到 Layer 3 (Adapter)
         // 关键：将 Layer 2 的 OpenAI 格式历史注入到 Engine
-        // Engine 内部负责将其转换为 ST 格式
-        // 深拷贝以防止引用污染
-        const historySnapshot = JSON.parse(JSON.stringify(session.history));
+        // [Modified] 直接传递历史记录，Prompt 组装由 SessionManager 配置的 Core 负责
+        const contextToLoad = session.history;
+        
         logger.debug({ 
             kind: 'biz', 
             component: COMPONENT, 
             message: 'Injecting history into engine', 
             meta: {
-                length: historySnapshot.length,
-                tail: previewHistory(historySnapshot),
+                historyLength: session.history.length,
             }
         });
         
         await session.engine.loadContext({
             characters: [session.character],
-            chat: historySnapshot
+            chat: contextToLoad
         });
 
         // 5. 触发生成 (Core Generation)
@@ -277,11 +276,12 @@ export class SimpleChat {
             }
         });
 
-        const historySnapshot = JSON.parse(JSON.stringify(session.history));
+        // [Modified] 直接传递历史记录，Prompt 组装由 Core 负责
+        const contextToLoad = session.history;
         
         await session.engine.loadContext({
             characters: [session.character],
-            chat: historySnapshot
+            chat: contextToLoad
         });
 
         const startedAtMs = Date.now();
@@ -327,7 +327,8 @@ export class SimpleChat {
             });
 
             // Delegate to Channel
-            const stream = channel.streamGenerate(historySnapshot, { 
+            // [Modified] Use contextToLoad (session.history)
+            const stream = channel.streamGenerate(contextToLoad, { 
                 engine: session.engine, 
                 userInput: enhancedInput 
             });
