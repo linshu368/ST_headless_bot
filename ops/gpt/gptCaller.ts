@@ -7,6 +7,7 @@ import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { promises as fs } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,7 +30,7 @@ export class GptCaller {
         this.apiKey = process.env.OPENAI_API_KEY || '';
         this.apiUrl = process.env.OPENAI_API_URL || '';
         // 运维工具使用配置的模型，优先级: OPS_GPT_MODEL > OPENAI_MODEL > 默认值
-        this.model = options.model || process.env.OPENAI_MODEL || 'google/gemini-3-pro-preview';
+        this.model = options.model || process.env.OPENAI_MODEL || 'google/gemini-3-flash-preview';
         this.timeout = options.timeout || 60000;
 
         if (!this.apiKey) {
@@ -52,6 +53,8 @@ export class GptCaller {
                 { role: 'user', content: prompt }
             ]
         };
+
+        await this.logRequestPayload(data);
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -79,6 +82,28 @@ export class GptCaller {
                 throw new Error(`请求超时，超过 ${this.timeout / 1000} 秒`);
             }
             throw new Error(`GPT 调用失败: ${error.message}`);
+        }
+    }
+
+    private async logRequestPayload(payload: Record<string, unknown>): Promise<void> {
+        const logsDir = path.resolve(__dirname, 'logs', 'api_payloads');
+        const createdAt = new Date().toISOString();
+        const safeTimestamp = createdAt.replace(/[:.]/g, '-');
+        const filename = `payload_${safeTimestamp}_${Math.random().toString(36).slice(2, 8)}.json`;
+        const filepath = path.join(logsDir, filename);
+        const logData = {
+            createdAt,
+            apiUrl: this.apiUrl,
+            payload
+        };
+
+        try {
+            await fs.mkdir(logsDir, { recursive: true });
+            await fs.writeFile(filepath, JSON.stringify(logData, null, 2), 'utf-8');
+            console.error(`[GPT Payload] ${filepath}`);
+            console.error(JSON.stringify(logData, null, 2));
+        } catch (error: any) {
+            console.warn(`[GPT Payload] 记录失败: ${error.message}`);
         }
     }
 }
