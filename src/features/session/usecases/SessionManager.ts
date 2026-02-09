@@ -52,6 +52,72 @@ export class SessionManager {
     }
 
     /**
+     * Helper: Load character data (Supabase > Mock)
+     */
+    private async _loadCharacter(roleId?: string): Promise<any> {
+        let character: any = null;
+
+        // 1. Try Supabase if roleId provided
+        if (roleId) {
+            try {
+                const { data, error } = await supabase
+                    .from('role_data')
+                    .select('*')
+                    .eq('role_id', roleId)
+                    .single();
+                
+                if (data) {
+                    const row = data as RoleDataRow;
+                    character = mapDbRowToCharacterV2(row).data;
+                    logger.debug({ kind: 'biz', component: COMPONENT, message: 'Character loaded from Supabase', meta: { roleId, name: character.name } });
+                } else if (error) {
+                    logger.warn({ kind: 'biz', component: COMPONENT, message: 'Supabase character lookup failed', error });
+                }
+            } catch (err) {
+                logger.error({ kind: 'biz', component: COMPONENT, message: 'Supabase error', error: err });
+            }
+        }
+
+        // 2. Fallback to Mock Data
+        if (!character) {
+            // User specified fallback path
+            const charPath = path.resolve(process.cwd(), 'scripts/publisher/step1/character_v2.json');
+            
+            if (fs.existsSync(charPath)) {
+                try {
+                    const fileContent = fs.readFileSync(charPath, 'utf-8');
+                    let mockChar = JSON.parse(fileContent);
+
+                    // Handle Array format (common in some exports)
+                    if (Array.isArray(mockChar) && mockChar.length > 0) {
+                        mockChar = mockChar[0];
+                    }
+
+                    if (mockChar.spec === 'chara_card_v2' && mockChar.data) {
+                        mockChar = mockChar.data;
+                    }
+                    character = mockChar;
+                    
+                    // Only log if we were expecting a specific role but failed
+                    if (roleId) {
+                        logger.info({ kind: 'biz', component: COMPONENT, message: 'Fallback to local mock character', meta: { charPath } });
+                    }
+                } catch (error) {
+                    logger.error({ kind: 'biz', component: COMPONENT, message: 'Failed to parse mock character file', error });
+                }
+            } else {
+                 logger.warn({ kind: 'biz', component: COMPONENT, message: 'Mock character file not found', meta: { charPath } });
+            }
+        }
+
+        if (!character) {
+            throw new Error('No character data available (neither Supabase nor Mock)');
+        }
+
+        return character;
+    }
+
+    /**
      * Get session data from Redis and reconstruct the session object
      */
     async getOrCreateSession(userId: string): Promise<ChatSession> {
@@ -77,32 +143,25 @@ export class SessionManager {
             }
         }
 
-        const session = await this._createSession(userId, existingSessionId, existingHistory, existingSessionData);
+        // Determine Role ID from Session Data
+        const currentRoleId = existingSessionData?.role_id as string | undefined;
+        const character = await this._loadCharacter(currentRoleId);
+
+        const session = await this._createSession(userId, character, existingSessionId, existingHistory, existingSessionData);
         return session;
     }
 
     /**
-     * Internal: Create a new session with default character
+     * Internal: Create a new session with provided character
      */
     private async _createSession(
         userId: string,
+        character: any,
         existingSessionId?: string | null,
         existingHistory?: OpenAIMessage[],
         existingSessionData?: Record<string, unknown> | null
     ): Promise<ChatSession> {
-        // 1. Load Character (Mock Data Source)
-        const charPath = path.join(config.st.mockDataPath, 'seraphina_v2.json');
-        if (!fs.existsSync(charPath)) {
-            const error = new Error(`Character file not found: ${charPath}`);
-            logger.error({ kind: 'biz', component: COMPONENT, message: 'Character file not found', error, meta: { charPath } });
-            throw error;
-        }
-        let character = JSON.parse(fs.readFileSync(charPath, 'utf-8'));
-        
-        // Handle V2 Character Card
-        if (character.spec === 'chara_card_v2' && character.data) {
-            character = character.data;
-        }
+        // 1. Character is now passed in (No file loading here)
 
         // 2. Initialize Adapter Chain (Layer 4)
         const networkHandler = createFetchInterceptor({
@@ -194,7 +253,8 @@ export class SessionManager {
                 await this.sessionStore.setSessionData(sessionId, {
                     session_id: sessionId,
                     user_id: userId,
-                    character_name: character.name,
+                    // character_name removed as requested (use role_id as unique identifier)
+                    role_id: character.extensions?.role_id,
                     turn_count: turnCount,
                 });
                 if (history.length > 0 && (!existingHistory || existingHistory.length === 0)) {
@@ -218,6 +278,78 @@ export class SessionManager {
             character,
             turnCount
         };
+    }
+
+    /**
+     * Switch character for the current user
+     * @param userId User ID
+     * @param roleId Target Role ID
+     * @returns New Character Data
+     */
+    async switchCharacter(userId: string, roleId: string): Promise<any> {
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Switching character', meta: { userId, roleId } });
+
+        // 1. Load New Character
+        let character = await this._loadCharacter(roleId);
+        
+        // If loaded character doesn't match requested roleId (fallback occurred), try default
+        const loadedRoleId = character.extensions?.role_id;
+        if (loadedRoleId !== roleId && roleId !== config.supabase.defaultRoleId) {
+             // If we failed to load specific role, try loading default role explicitly
+             // But _loadCharacter already falls back to Mock which is acceptable.
+             // We just proceed with whatever character we got.
+        }
+
+        // 2. Get Current Session
+        // We only need the Session ID to update Redis
+        let sessionId: string | null = null;
+        if (this.sessionStore) {
+            sessionId = await this.sessionStore.getCurrentSessionId(userId);
+        }
+
+        if (!sessionId) {
+            // No session exists, just return character (getOrCreateSession will handle it next time)
+            // But we should probably preset the role_id in Redis if possible?
+            // Since we can't set session data without a session ID, we defer.
+            // But wait, if user sends /start role_x, they might not have a session.
+            // In that case, we want to ensure next getOrCreateSession picks this role.
+            // We can set a "pending role preference"? 
+            // Or just create a session now?
+            // Let's create a fresh session.
+            await this.getOrCreateSession(userId); // This creates a session with whatever default
+            // Then we recurse or just proceed?
+            // Let's just proceed to update the newly created session.
+            if (this.sessionStore) {
+                sessionId = await this.sessionStore.getCurrentSessionId(userId);
+            }
+        }
+
+        if (sessionId && this.sessionStore) {
+            try {
+                // 3. Clear History
+                await this.sessionStore.setMessages(sessionId, []);
+
+                // 4. Update Metadata
+                // Get current data to preserve turn_count
+                const currentData = await this.sessionStore.getSessionData(sessionId) || {};
+                await this.sessionStore.setSessionData(sessionId, {
+                    ...currentData,
+                    // character_name removed
+                    role_id: character.extensions?.role_id,
+                    post_link: character.extensions?.post_link,
+                    avatar: character.extensions?.avatar,
+                    // turn_count is preserved from currentData
+                });
+                
+                logger.info({ kind: 'biz', component: COMPONENT, message: 'Session updated for new character', meta: { sessionId, roleId: character.extensions?.role_id } });
+
+            } catch (error) {
+                logger.error({ kind: 'biz', component: COMPONENT, message: 'Failed to update session for character switch', error });
+                throw error;
+            }
+        }
+
+        return character;
     }
 
     async appendMessages(session: ChatSession, messages: OpenAIMessage[]): Promise<void> {

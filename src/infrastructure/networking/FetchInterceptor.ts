@@ -181,6 +181,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 const targetUrl = baseUrl.endsWith('/chat/completions')
                     ? baseUrl
                     : `${baseUrl}/chat/completions`;
+                const openRouterChatUrl = 'https://openrouter.ai/api/v1/chat/completions';
                 
                 logger.info({ kind: 'sys', component: COMPONENT, message: 'Forwarding to LLM', meta: { targetUrl, model } });
                 
@@ -238,6 +239,18 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     
                 if (streamModeEnabled) {
                     requestBody.stream = true;
+                }
+
+                if (targetUrl === openRouterChatUrl) {
+                    requestBody.provider = {
+                        sort: 'latency',
+                        ignore: [
+                            'wandb',
+                            'deepinfra',
+                            'sambanova',
+                            'siliconflow'
+                        ]
+                    };
                 }
 
                 // [ADDED] Log the full prompt and request body for debugging

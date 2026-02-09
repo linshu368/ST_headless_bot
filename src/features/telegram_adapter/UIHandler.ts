@@ -53,5 +53,13 @@ export class UIHandler {
             ]
         };
     }
+
+    static createRoleChannelKeyboard(url: string): TelegramBot.InlineKeyboardMarkup {
+        return {
+            inline_keyboard: [
+                [{ text: "📚 浏览角色图鉴", url: url }]
+            ]
+        };
+    }
 }
 

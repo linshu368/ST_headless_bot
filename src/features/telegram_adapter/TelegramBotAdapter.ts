@@ -155,6 +155,14 @@ export class TelegramBotAdapter {
             } else if (text === '❓ 帮助') {
                 await this._handleHelp(chatId);
                 return;
+            } else if (text === '🎭 选择角色' || text === '🗂 历史聊天') {
+                 if (text === '🎭 选择角色') {
+                     await this._handleRoleSelection(chatId);
+                 } else {
+                     // TODO: History
+                     await this.bot.sendMessage(chatId, "功能开发中...");
+                 }
+                 return;
             }
 
             // 3. 普通对话处理
@@ -244,9 +252,14 @@ export class TelegramBotAdapter {
 
         switch (command) {
             case '/start':
-                await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。", {
-                    reply_markup: UIHandler.createMainMenuKeyboard()
-                });
+                const args = commandText.split(' ');
+                let roleId = config.supabase.defaultRoleId;
+
+                if (args.length > 1 && args[1].startsWith('role_')) {
+                    roleId = args[1].replace('role_', '');
+                }
+
+                await this._handleStartRole(chatId, roleId);
                 break;
             
             case '/help':
@@ -257,6 +270,59 @@ export class TelegramBotAdapter {
                 logger.debug({ kind: 'biz', component: COMPONENT, message: 'Unknown command', meta: { command } });
                 await this.bot.sendMessage(chatId, "未知指令。发送 /help 查看帮助。");
                 break;
+        }
+    }
+
+    private async _handleRoleSelection(chatId: string): Promise<void> {
+        const text = `🎭 **选择你的专属角色**
+
+📚 在角色图鉴频道中浏览海量精品角色：
+• 🌟 经典人物角色
+• 💖 恋爱互动角色
+• 🎮 游戏动漫角色
+• ✨ 更多精品角色...
+
+💡 点击下方按钮进入角色图鉴频道 👇`;
+        
+        await this.bot.sendMessage(chatId, text, {
+            parse_mode: 'Markdown',
+            reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl)
+        });
+    }
+
+    private async _handleStartRole(chatId: string, roleId: string): Promise<void> {
+        try {
+             // 1. Switch Character
+            const character = await this.sessionManager.switchCharacter(chatId, roleId);
+            
+            // 2. Construct Preview Message
+            // Ensure post_link is valid
+            const postLink = character.extensions?.post_link;
+            
+            const firstMes = character.first_mes || "你好！";
+            
+            logger.info({ kind: 'biz', component: COMPONENT, message: 'Role started', meta: { roleId, postLink } });
+
+            // 3. Send Message
+            // Step 1: Send Preview Card (if link exists)
+            if (postLink) {
+                // Sending link with preview enabled
+                // Text can be customized, e.g., "Returning to Channel..." or hidden character name
+                await this.bot.sendMessage(chatId, `<a href="${postLink}">回到角色卡频道</a>`, {
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: false,
+                });
+            }
+
+            // Step 2: Send First Message
+            await this.bot.sendMessage(chatId, firstMes, {
+                disable_web_page_preview: true, // Disable preview for first message to avoid double previews
+                reply_markup: UIHandler.createMainMenuKeyboard()
+            });
+
+        } catch (error) {
+            logger.error({ kind: 'biz', component: COMPONENT, message: 'Role switch failed', error });
+            await this.bot.sendMessage(chatId, "抱歉，角色切换失败，请稍后再试。");
         }
     }
 

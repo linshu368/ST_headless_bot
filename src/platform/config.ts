@@ -41,6 +41,8 @@ export interface Config {
     supabase: {
         url: string;
         key: string;
+        defaultRoleId: string;
+        roleChannelUrl: string;
     };
     ai_config_source: {
         channels: AIChannelConfig;
@@ -93,6 +95,8 @@ const config: Config = {
     supabase: {
         url: process.env.SUPABASE_URL || '',
         key: process.env.SUPABASE_KEY || '',
+        defaultRoleId: process.env.DEFAULT_ROLE_ID || '2801539985809058',
+        roleChannelUrl: process.env.ROLE_CHANNEL_URL || 'https://t.me/ai_role_list',
     },
     timeouts: {
         interChunk: Number(process.env.AI_STREAM_INTER_CHUNK_TIMEOUT || '3000'),

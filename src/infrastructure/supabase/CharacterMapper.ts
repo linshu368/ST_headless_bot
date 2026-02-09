@@ -27,6 +27,8 @@ export interface RoleDataRow {
     role_id: string;
     summary: string;
     deeplink: string;
+    post_link: string;
+    avatar: string;
     
     created_at: string;
     updated_at: string;
@@ -61,7 +63,9 @@ export function mapDbRowToCharacterV2(row: RoleDataRow) {
                 title: row.title || '',
                 role_id: row.role_id,
                 summary: row.summary || '',
-                deeplink: row.deeplink || ''
+                deeplink: row.deeplink || '',
+                post_link: row.post_link || '',
+                avatar: row.avatar || ''
             }
         }
     };
