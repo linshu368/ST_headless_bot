@@ -59,7 +59,10 @@ export class UIHandler {
     static createRegenerateKeyboard(messageId: number): TelegramBot.InlineKeyboardMarkup {
         return {
             inline_keyboard: [
-                [{ text: "🔄 重新生成", callback_data: `regenerate:${messageId}` }]
+                [
+                    { text: "🔄 重新生成", callback_data: `regenerate:${messageId}` },
+                    { text: "🆕 新的对话", callback_data: `new_chat:${messageId}` }
+                ]
             ]
         };
     }

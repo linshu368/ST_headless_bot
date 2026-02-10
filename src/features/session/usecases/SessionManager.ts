@@ -459,6 +459,23 @@ export class SessionManager {
         return lastUserContent;
     }
 
+    /**
+     * Clear session history for a fresh start, preserving metadata (role, turn_count)
+     */
+    async resetSessionHistory(userId: string): Promise<void> {
+        if (!this.sessionStore) return;
+        
+        const sessionId = await this.sessionStore.getCurrentSessionId(userId);
+        if (!sessionId) return;
+
+        logger.info({ kind: 'biz', component: COMPONENT, message: 'Resetting session history', meta: { userId, sessionId } });
+        
+        // Clear messages
+        await this.sessionStore.setMessages(sessionId, []);
+        
+        // Metadata (turn_count, role_id) is preserved in separate sessionData key
+    }
+
     async getUserModelMode(userId: string): Promise<string> {
         if (!this.sessionStore) return 'standard_b';
         try {

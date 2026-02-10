@@ -483,6 +483,27 @@ export class TelegramBotAdapter {
                     
                     await this.bot.answerCallbackQuery(query.id);
                     break;
+
+                case 'new_chat':
+                    // 1. Clear History
+                    await this.sessionManager.resetSessionHistory(chatId);
+                    
+                    // 2. Remove buttons from the message that triggered this
+                    if (query.message?.message_id) {
+                        await this.bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+                            chat_id: chatId,
+                            message_id: query.message.message_id
+                        }).catch(() => {});
+                    }
+
+                    // 3. Send confirmation
+                    await this.bot.sendMessage(chatId, "🧹 **新对话已开启**\n\n上下文已清空，我们可以重新开始了。", {
+                        parse_mode: 'Markdown',
+                        reply_markup: UIHandler.createMainMenuKeyboard()
+                    });
+
+                    await this.bot.answerCallbackQuery(query.id, { text: '已开启新对话' });
+                    break;
             }
             } catch (error) {
                 logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
