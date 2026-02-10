@@ -131,7 +131,6 @@
         "start:electron": "cd ./src/electron && npm run start",
         "start:deno": "deno run --allow-run --allow-net --allow-read --allow-write --allow-sys --allow-env server.js",
         "start:no-csrf": "node server.js --disableCsrf",
-        "postinstall": "node post-install.js",
         "test:rules": "node --loader ts-node/esm src/features/chat/rules/tests/streamingSchedule.golden.ts",
         "test:redis": "tsx src/infrastructure/redis/tests/upstashSessionStore.test.ts",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
