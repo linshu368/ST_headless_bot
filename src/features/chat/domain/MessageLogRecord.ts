@@ -10,5 +10,6 @@ export interface MessageLogRecord {
     type: 'normal' | 'regenerate';
     round?: number;
     full_response?: number; // seconds
+    first_response_latency?: number; // seconds (time to first 5 chars)
     // timestamp and id are handled by DB
 }

@@ -170,13 +170,14 @@ export class SimpleChat {
         isFinal: boolean;
         firstResponseMs?: number;
     }> {
+        const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Streaming chat started' });
 
         const session = await this.sessionManager.getOrCreateSession(userId);
 
         // 使用通用生成器
         let accumulatedText = '';
-        for await (const update of this._executeStreamGeneration(session, userInput, userId, 'normal')) {
+        for await (const update of this._executeStreamGeneration(session, userInput, userId, 'normal', processingStartTime)) {
             if (update.isFinal) {
                 accumulatedText = update.text;
             }
@@ -209,6 +210,7 @@ export class SimpleChat {
         isFinal: boolean;
         firstResponseMs?: number;
     }> {
+        const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Regenerating chat started' });
 
         const session = await this.sessionManager.getOrCreateSession(userId);
@@ -228,7 +230,7 @@ export class SimpleChat {
 
         // 2. 使用通用生成器 (使用回滚后的用户输入)
         let accumulatedText = '';
-        for await (const update of this._executeStreamGeneration(session, lastUserContent, userId, 'regenerate')) {
+        for await (const update of this._executeStreamGeneration(session, lastUserContent, userId, 'regenerate', processingStartTime)) {
              if (update.isFinal) {
                 accumulatedText = update.text;
             }
@@ -253,7 +255,8 @@ export class SimpleChat {
         session: any, 
         userInput: string, 
         userId: string, 
-        messageType: 'normal' | 'regenerate' = 'normal'
+        messageType: 'normal' | 'regenerate',
+        processingStartTime: number
     ): AsyncGenerator<{
         text: string;
         isFirst: boolean;
@@ -385,7 +388,7 @@ export class SimpleChat {
 
                     if (decision?.shouldUpdate && accumulatedText !== lastSentText) {
                         if (decision.isFirstUpdate && firstResponseMs === undefined) {
-                            firstResponseMs = nowMs - startedAtMs;
+                            firstResponseMs = nowMs - processingStartTime;
                         }
 
                         lastSentText = accumulatedText;
@@ -451,7 +454,8 @@ export class SimpleChat {
                 model_name: executionTrace.model,
                 attempt_count: executionTrace.attempt,
                 type: messageType,
-                full_response: (Date.now() - startedAtMs) / 1000
+                full_response: (Date.now() - startedAtMs) / 1000,
+                first_response_latency: firstResponseMs ? firstResponseMs / 1000 : null
             }).then(messageId => {
                 if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
                     this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {
