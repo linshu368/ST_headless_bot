@@ -311,7 +311,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 }
 
                 if (streamModeEnabled) {
-                    const fullText = await parseOpenAIStream(response, streamSink);
+                    const fullText = await parseOpenAIStream(response, streamSink, traceContext);
                     const responseBody = buildChatCompletionResponse(fullText, requestBody.model || model);
                     return new Response(JSON.stringify(responseBody), {
                         status: 200,
@@ -434,7 +434,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     return interceptor;
 };
 
-const parseOpenAIStream = async (response: Response, sink: StreamSink | null): Promise<string> => {
+const parseOpenAIStream = async (response: Response, sink: StreamSink | null, traceContext?: any): Promise<string> => {
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let fullText = '';
@@ -462,6 +462,17 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null): P
                 }
                 try {
                     const payload = JSON.parse(data);
+                    
+                    // [Capture] generation_id and model from the stream
+                    if (traceContext) {
+                        if (payload.id && !traceContext.generation_id) {
+                            traceContext.generation_id = payload.id;
+                        }
+                        if (payload.model && !traceContext.model_from_stream) {
+                            traceContext.model_from_stream = payload.model;
+                        }
+                    }
+
                     const delta = payload?.choices?.[0]?.delta?.content;
                     if (typeof delta === 'string' && delta.length > 0) {
                         fullText += delta;

@@ -266,7 +266,9 @@ export class SimpleChat {
             model: null as string | null, 
             attempt: null as number | null, 
             provider: null as string | null,
-            finalContext: null as any
+            finalContext: null as any,
+            generation_id: null as string | null,
+            apiKey: null as string | null
         };
 
         const previewHistory = (history: OpenAIMessage[], limit = 3) => {
@@ -296,9 +298,29 @@ export class SimpleChat {
         // [Modified] 直接传递历史记录，Prompt 组装由 Core 负责
         const contextToLoad = session.history;
         
+        // [Fix] Memory Correction for Regenerate
+        // When regenerating, the history already contains the user input (due to rollback).
+        // STEngine will append the userInput again, causing duplication.
+        // So we must remove the last user message from the context loaded into the engine.
+        let engineContext = contextToLoad;
+        if (messageType === 'regenerate') {
+            if (contextToLoad.length > 0 && contextToLoad[contextToLoad.length - 1].role === 'user') {
+                engineContext = contextToLoad.slice(0, -1);
+                 logger.debug({ 
+                    kind: 'biz', 
+                    component: COMPONENT, 
+                    message: 'Regenerate mode: Removed last user message from engine context',
+                    meta: { 
+                        originalLength: contextToLoad.length,
+                        newLength: engineContext.length
+                    }
+                });
+            }
+        }
+
         await session.engine.loadContext({
             characters: [session.character],
-            chat: contextToLoad
+            chat: engineContext
         });
 
         const startedAtMs = Date.now();
@@ -429,6 +451,12 @@ export class SimpleChat {
                 model_name: executionTrace.model,
                 attempt_count: executionTrace.attempt,
                 type: messageType
+            }).then(messageId => {
+                if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
+                    this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {
+                        logger.error({ kind: 'infra', component: COMPONENT, message: 'Backfill stats failed', error: err });
+                    });
+                }
             }).catch(err => {
                 logger.error({ kind: 'infra', component: COMPONENT, message: 'Message persistence failed', error: err });
             });
@@ -445,6 +473,47 @@ export class SimpleChat {
         const { system_instructions } = config.telegram.instruction_enhancement;
         // 无论轮次如何，统一使用最高优先级的系统指令
         return `##系统指令：以下为最高优先级指令。\n${system_instructions}\n##用户指令:${userInput}\n`;
+    }
+
+    /**
+     * Backfill OpenRouter statistics asynchronously
+     */
+    private async _backfillOpenRouterStats(messageId: string, generationId: string, apiKey: string): Promise<void> {
+        try {
+            const response = await fetch(`https://openrouter.ai/api/v1/generation?id=${generationId}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`
+                }
+            });
+
+            if (!response.ok) {
+                logger.warn({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats fetch failed', meta: { status: response.status } });
+                return;
+            }
+
+            const json = await response.json();
+            const stats = json.data;
+
+            if (stats) {
+                await this.messageRepository.updateMessageStats(messageId, {
+                    model: stats.model,
+                    generation_time: (stats.generation_time || 0) / 1000, // ms -> s
+                    latency: (stats.latency || 0) / 1000, // ms -> s
+                    native_tokens_prompt: stats.native_tokens_prompt,
+                    native_tokens_completion: stats.native_tokens_completion,
+                    native_tokens_reasoning: stats.native_tokens_reasoning,
+                    native_tokens_cached: stats.native_tokens_cached,
+                    cache_discount: stats.cache_discount,
+                    usage: stats.usage,
+                    finish_reason: stats.finish_reason,
+                    provider_name: stats.provider_name
+                });
+                logger.info({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats backfilled', meta: { messageId, generationId } });
+            }
+        } catch (error) {
+            logger.error({ kind: 'infra', component: COMPONENT, message: 'Error backfilling OpenRouter stats', error });
+        }
     }
 
     async getHistory(userId: string): Promise<any[]> {

@@ -186,6 +186,7 @@ export class PipelineChannel implements IAIChannel {
                         context.trace.attempt = i + 1;
                         //这里的provider不确定是用于记录那个字段，如果是供应啥元数据则不需要，可以删掉
                         context.trace.provider = profile.provider || 'unknown';
+                        context.trace.apiKey = profile.key; // Capture API Key for backfill
                     }
 
                     return;
