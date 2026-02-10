@@ -8,5 +8,7 @@ export interface MessageLogRecord {
     model_name: string | null;
     attempt_count: number | null;
     type: 'normal' | 'regenerate';
+    round?: number;
+    full_response?: number; // seconds
     // timestamp and id are handled by DB
 }

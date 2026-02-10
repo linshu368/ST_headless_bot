@@ -450,7 +450,8 @@ export class SimpleChat {
                 history: executionTrace.finalContext || historySnapshot,
                 model_name: executionTrace.model,
                 attempt_count: executionTrace.attempt,
-                type: messageType
+                type: messageType,
+                full_response: (Date.now() - startedAtMs) / 1000
             }).then(messageId => {
                 if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
                     this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {

@@ -485,10 +485,14 @@ export class TelegramBotAdapter {
                     break;
 
                 case 'new_chat':
-                    // 1. Clear History
+                    // 1. Get Session Info (for character title)
+                    const session = await this.sessionManager.getOrCreateSession(chatId);
+                    const characterTitle = session.character?.extensions?.title || session.character?.name || "未知角色";
+
+                    // 2. Clear History
                     await this.sessionManager.resetSessionHistory(chatId);
                     
-                    // 2. Remove buttons from the message that triggered this
+                    // 3. Remove buttons from the message that triggered this
                     if (query.message?.message_id) {
                         await this.bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
                             chat_id: chatId,
@@ -496,8 +500,9 @@ export class TelegramBotAdapter {
                         }).catch(() => {});
                     }
 
-                    // 3. Send confirmation
-                    await this.bot.sendMessage(chatId, "🧹 **新对话已开启**\n\n上下文已清空，我们可以重新开始了。", {
+                    // 4. Send confirmation
+                    const newChatText = `🆕 已开启新对话\n\n💫 当前角色：**${characterTitle}**`;
+                    await this.bot.sendMessage(chatId, newChatText, {
                         parse_mode: 'Markdown',
                         reply_markup: UIHandler.createMainMenuKeyboard()
                     });
