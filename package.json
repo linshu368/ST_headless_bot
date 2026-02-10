@@ -96,10 +96,14 @@
         "ws": "^8.18.3",
         "yaml": "^2.8.1",
         "yargs": "^17.7.1",
-        "yauzl": "^3.2.0"
+        "yauzl": "^3.2.0",
+        "ts-node": "^10.9.2",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3"
     },
     "engines": {
-        "node": ">= 18"
+        "node": ">= 18",
+        "npm": ">= 9"
     },
     "overrides": {
         "vectra": {
@@ -121,12 +125,11 @@
     },
     "version": "1.14.0",
     "scripts": {
-        "start": "node server.js",
+        "start": "tsx src/server_tg.ts",
         "debug": "node --inspect server.js",
         "start:global": "node server.js --global",
         "start:electron": "cd ./src/electron && npm run start",
         "start:deno": "deno run --allow-run --allow-net --allow-read --allow-write --allow-sys --allow-env server.js",
-        "start:bun": "bun server.js",
         "start:no-csrf": "node server.js --disableCsrf",
         "postinstall": "node post-install.js",
         "test:rules": "node --loader ts-node/esm src/features/chat/rules/tests/streamingSchedule.golden.ts",
@@ -175,9 +178,6 @@
         "eslint": "^8.57.1",
         "eslint-plugin-jest": "^27.9.0",
         "eslint-plugin-jsdoc": "^48.10.0",
-        "ts-node": "^10.9.2",
-        "tsx": "^4.21.0",
-        "typescript": "^5.9.3",
         "vitest": "^0.34.6"
     }
 }
