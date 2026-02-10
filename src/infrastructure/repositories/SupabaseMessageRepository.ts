@@ -53,17 +53,17 @@ export class SupabaseMessageRepository implements IMessageRepository {
             const { error } = await supabase
                 .from('messages')
                 .update({
-                    model: stats.model, // OpenRouter model name (might be more specific)
-                    generation_time: stats.generation_time,
-                    latency: stats.latency,
-                    native_tokens_prompt: stats.native_tokens_prompt,
-                    native_tokens_completion: stats.native_tokens_completion,
-                    native_tokens_reasoning: stats.native_tokens_reasoning,
-                    native_tokens_cached: stats.native_tokens_cached,
-                    cache_discount: stats.cache_discount,
-                    usage: stats.usage,
-                    finish_reason: stats.finish_reason,
-                    provider_name: stats.provider_name
+                    meta_model: stats.model, // OpenRouter model name (might be more specific)
+                    meta_generation_time: stats.generation_time,
+                    meta_latency: stats.latency,
+                    meta_native_tokens_prompt: stats.native_tokens_prompt,
+                    meta_native_tokens_completion: stats.native_tokens_completion,
+                    meta_native_tokens_reasoning: stats.native_tokens_reasoning,
+                    meta_native_tokens_cached: stats.native_tokens_cached,
+                    meta_cache_discount: stats.cache_discount,
+                    meta_usage: stats.usage,
+                    meta_finish_reason: stats.finish_reason,
+                    meta_provider_name: stats.provider_name
                 })
                 .eq('id', messageId);
 
