@@ -95,7 +95,7 @@ const config: Config = {
     supabase: {
         url: process.env.SUPABASE_URL || '',
         key: process.env.SUPABASE_KEY || '',
-        defaultRoleId: process.env.DEFAULT_ROLE_ID || '2801539985809058',
+        defaultRoleId: process.env.DEFAULT_ROLE_ID || '2111485095933381',
         roleChannelUrl: process.env.ROLE_CHANNEL_URL || 'https://t.me/ai_role_list',
     },
     timeouts: {

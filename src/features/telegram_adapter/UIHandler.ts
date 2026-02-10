@@ -31,6 +31,16 @@ export class UIHandler {
         };
     }
 
+    static getModelSelectionCaption(): string {
+        return `【 温馨提示 】
+🔹 模型表现
+中级模型 A 与 B 性能均十分强劲，仅在创作风格上有所侧重。您可以根据实际审美需求自由选取。
+⚠️ 特别说明
+ 中级模型 B 在极少数情况下会受到 NSFW 机制限制，请知悉。
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+👉 您可以根据自身需要，选择适合您的模型。`;
+    }
+
     static createModelSelectionKeyboard(currentMode: string): TelegramBot.InlineKeyboardMarkup {
         const isBasic = currentMode === ModelTier.BASIC;
         const isStandardA = currentMode === ModelTier.STANDARD_A;
@@ -41,7 +51,7 @@ export class UIHandler {
                 [{ text: `🎦 中级模型B${isStandardB ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD_B}` }],
                 [{ text: `🍔 基础模型${isBasic ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.BASIC}` }],
                 [{ text: `📖 中级模型A${isStandardA ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD_A}` }],
-                [{ text: "🔙 返回", callback_data: "settings_main" }]
+                [{ text: "🔙 返回", callback_data: "settings_back_from_model" }]
             ]
         };
     }
@@ -62,4 +72,3 @@ export class UIHandler {
         };
     }
 }
-

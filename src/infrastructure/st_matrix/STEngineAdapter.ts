@@ -571,15 +571,21 @@ export class STEngineAdapter implements ISTEngine {
     /**
      * Triggers the generation process
      * @param prompt - The user's input text
+     * @param trace - Optional trace object
      * @returns The last message generated (ST Message Object)
      */
-    async generate(prompt: string): Promise<any> {
-        return this._runGeneration(prompt);
+    async generate(prompt: string, trace?: any): Promise<any> {
+        return this._runGeneration(prompt, trace);
     }
 
-    generateStream(prompt: string): AsyncIterable<string> {
+    generateStream(prompt: string, trace?: any): AsyncIterable<string> {
         if (!this.networkHandler.setStreamMode || !this.networkHandler.setStreamSink) {
             throw new Error('Network handler does not support streaming.');
+        }
+
+        // [Trace] Pass trace context to network handler
+        if (trace && this.networkHandler.setTraceContext) {
+            this.networkHandler.setTraceContext(trace);
         }
 
         const streamQueue = this._createAsyncQueue<string>();
@@ -590,7 +596,7 @@ export class STEngineAdapter implements ISTEngine {
             onError: (error: Error) => streamQueue.error(error),
         });
 
-        const generationPromise = this._runGeneration(prompt).catch((error) => {
+        const generationPromise = this._runGeneration(prompt, trace).catch((error) => {
             streamQueue.error(error instanceof Error ? error : new Error(String(error)));
             throw error;
         });
@@ -622,9 +628,14 @@ export class STEngineAdapter implements ISTEngine {
         return wrappedIterator();
     }
 
-    private async _runGeneration(prompt: string): Promise<any> {
+    private async _runGeneration(prompt: string, trace?: any): Promise<any> {
         if (!this.instance) throw new Error('STEngine not initialized');
         
+        // [Trace] Ensure trace context is set (redundant for stream but necessary for regular generate)
+        if (trace && this.networkHandler.setTraceContext) {
+            this.networkHandler.setTraceContext(trace);
+        }
+
         // 1. Set Input
         this.userConfig.send_textarea = prompt;
         // Also sync to window global for ST to pick it up

@@ -1,6 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { SimpleChat } from '../chat/usecases/SimpleChat.js';
 import { ChannelRegistry } from '../../infrastructure/ai/ChannelRegistry.js';
+import { SupabaseMessageRepository } from '../../infrastructure/repositories/SupabaseMessageRepository.js';
+import { supabase } from '../../infrastructure/supabase/SupabaseClient.js';
 import { SessionManager } from '../session/usecases/SessionManager.js';
 import { ModelTier } from '../chat/domain/ModelStrategy.js';
 import config from '../../platform/config.js';
@@ -57,7 +59,8 @@ export class TelegramBotAdapter {
         
         // Initialize dependencies
         const channelRegistry = new ChannelRegistry();
-        this.simpleChat = new SimpleChat(channelRegistry);
+        const messageRepository = new SupabaseMessageRepository();
+        this.simpleChat = new SimpleChat(channelRegistry, messageRepository);
         this.sessionManager = new SessionManager(); // Initialize SessionManager
     }
 
@@ -253,13 +256,14 @@ export class TelegramBotAdapter {
         switch (command) {
             case '/start':
                 const args = commandText.split(' ');
-                let roleId = config.supabase.defaultRoleId;
-
                 if (args.length > 1 && args[1].startsWith('role_')) {
-                    roleId = args[1].replace('role_', '');
+                    const roleId = args[1].replace('role_', '');
+                    await this._handleStartRole(chatId, roleId);
+                } else {
+                    await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。", {
+                        reply_markup: UIHandler.createMainMenuKeyboard()
+                    });
                 }
-
-                await this._handleStartRole(chatId, roleId);
                 break;
             
             case '/help':
@@ -358,6 +362,32 @@ export class TelegramBotAdapter {
         });
     }
 
+    private async _handleModelSelection(chatId: string, previousMessageId?: number): Promise<void> {
+        if (!supabase) {
+            await this.bot.sendMessage(chatId, "⚠️ 系统配置错误：Supabase 未连接，无法加载图片。");
+            return;
+        }
+
+        // 1. Delete previous message (Settings menu)
+        if (previousMessageId) {
+            await this.bot.deleteMessage(chatId, previousMessageId).catch(() => {});
+        }
+
+        // 2. Get Image URL
+        // Assuming file name is 'model_class.png' in 'model_photo' bucket
+        const { data } = supabase.storage.from('model_photo').getPublicUrl('model_class.png');
+        
+        // 3. Send Photo with Caption
+        const currentMode = await this.sessionManager.getUserModelMode(chatId);
+        const caption = UIHandler.getModelSelectionCaption();
+
+        await this.bot.sendPhoto(chatId, data.publicUrl, {
+            caption: caption,
+            parse_mode: 'Markdown', // Ensure caption uses Markdown if needed, though caption entities are usually auto-detected or simple text.
+            reply_markup: UIHandler.createModelSelectionKeyboard(currentMode)
+        });
+    }
+
     private async _handleCallbackQuery(query: TelegramBot.CallbackQuery): Promise<void> {
         if (!query.data) return;
         const chatId = query.message?.chat.id.toString();
@@ -375,19 +405,27 @@ export class TelegramBotAdapter {
                     break;
                 
                 case 'settings_model_select':
-                    const currentMode = await this.sessionManager.getUserModelMode(chatId);
-                    await this.bot.editMessageText("请选择要切换的模型", {
-                        chat_id: chatId,
-                        message_id: query.message?.message_id,
-                        reply_markup: UIHandler.createModelSelectionKeyboard(currentMode)
-                    });
+                    await this._handleModelSelection(chatId, query.message?.message_id);
                     break;
 
                 case 'set_mode':
                     const newMode = params[0];
                     await this.sessionManager.setUserModelMode(chatId, newMode);
                     await this.bot.answerCallbackQuery(query.id, { text: `✅ 已切换为：${this._getModelDisplayName(newMode)}` });
-                    await this._updateSettingsMessage(query);
+                    
+                    // Delete the photo message and return to settings
+                    if (query.message?.message_id) {
+                        await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                    }
+                    await this._handleSettings(chatId);
+                    break;
+
+                case 'settings_back_from_model':
+                    // Delete the photo message and return to settings
+                    if (query.message?.message_id) {
+                        await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                    }
+                    await this._handleSettings(chatId);
                     break;
 
                 case 'close_settings':

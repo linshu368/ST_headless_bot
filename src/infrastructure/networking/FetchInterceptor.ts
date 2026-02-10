@@ -25,6 +25,7 @@ export interface FetchInterceptor extends Function {
     setStreamMode?: (enabled: boolean) => void;
     setStreamSink?: (sink: StreamSink | null) => void;
     setConfig?: (config: FetchInterceptorConfig) => void;
+    setTraceContext?: (trace: any) => void;
 }
 
 export interface StreamSink {
@@ -52,6 +53,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     let streamModeEnabled = false;
     let streamSink: StreamSink | null = null;
     let currentConfig: FetchInterceptorConfig = { ...config };
+    let traceContext: any = null;
 
     const interceptor = (async (url: string | URL | Request, options: any = {}): Promise<Response | any> => {
         const urlStr = url.toString();
@@ -269,6 +271,12 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                     }
                 });
 
+                // [ADDED] Capture final context if trace is available
+                if (traceContext) {
+                    traceContext.finalContext = requestBody.messages;
+                    logger.debug({ kind: 'sys', component: COMPONENT, message: 'Captured final context for trace', meta: { messageCount: requestBody.messages?.length } });
+                }
+
                 const bodyStr = JSON.stringify(requestBody);
                 
                 // Real Request to LLM
@@ -417,6 +425,10 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     interceptor.setConfig = (newConfig: FetchInterceptorConfig) => {
         logger.debug({ kind: 'sys', component: COMPONENT, message: 'Updating FetchInterceptor config', meta: { newConfig } });
         currentConfig = { ...currentConfig, ...newConfig };
+    };
+
+    interceptor.setTraceContext = (trace: any) => {
+        traceContext = trace;
     };
 
     return interceptor;

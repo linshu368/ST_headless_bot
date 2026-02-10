@@ -58,7 +58,7 @@ export class SessionManager {
         let character: any = null;
 
         // 1. Try Supabase if roleId provided
-        if (roleId) {
+        if (roleId && supabase) {
             try {
                 const { data, error } = await supabase
                     .from('role_data')
@@ -76,6 +76,8 @@ export class SessionManager {
             } catch (err) {
                 logger.error({ kind: 'biz', component: COMPONENT, message: 'Supabase error', error: err });
             }
+        } else if (roleId && !supabase) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Supabase client unavailable; skipping character lookup', meta: { roleId } });
         }
 
         // 2. Fallback to Mock Data

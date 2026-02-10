@@ -24,16 +24,18 @@ export interface ISTEngine {
     /**
      * Trigger a generation request
      * @param prompt User input
+     * @param trace Optional trace object for capturing generation metadata
      * @returns The generated message object (ST format) or null
      */
-    generate(prompt: string): Promise<any>;
+    generate(prompt: string, trace?: any): Promise<any>;
 
     /**
      * Trigger a streaming generation request
      * @param prompt User input
+     * @param trace Optional trace object for capturing generation metadata
      * @returns Async stream of text deltas
      */
-    generateStream(prompt: string): AsyncIterable<string>;
+    generateStream(prompt: string, trace?: any): AsyncIterable<string>;
 }
 
 export interface STContextData {
@@ -48,5 +50,5 @@ export interface ISTNetworkHandler {
     setStreamMode?(enabled: boolean): void;
     setStreamSink?(sink: any | null): void;
     setConfig?(config: any): void;
+    setTraceContext?(trace: any): void;
 }
-

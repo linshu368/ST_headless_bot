@@ -6,6 +6,7 @@ import {
 import { logger } from '../../../platform/logger.js';
 import config from '../../../platform/config.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
+import type { IMessageRepository } from '../ports/IMessageRepository.js';
 import { resolveChannelId, mapLegacyModeToTier } from '../domain/ModelStrategy.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 
@@ -22,10 +23,12 @@ const COMPONENT = 'SimpleChat';
 export class SimpleChat {
     private sessionManager: SessionManager;
     private channelRegistry: IChannelRegistry;
+    private messageRepository: IMessageRepository;
 
-    constructor(channelRegistry: IChannelRegistry) {
+    constructor(channelRegistry: IChannelRegistry, messageRepository: IMessageRepository) {
         this.sessionManager = new SessionManager();
         this.channelRegistry = channelRegistry;
+        this.messageRepository = messageRepository;
     }
     
     /**
@@ -173,7 +176,7 @@ export class SimpleChat {
 
         // 使用通用生成器
         let accumulatedText = '';
-        for await (const update of this._executeStreamGeneration(session, userInput, userId)) {
+        for await (const update of this._executeStreamGeneration(session, userInput, userId, 'normal')) {
             if (update.isFinal) {
                 accumulatedText = update.text;
             }
@@ -225,7 +228,7 @@ export class SimpleChat {
 
         // 2. 使用通用生成器 (使用回滚后的用户输入)
         let accumulatedText = '';
-        for await (const update of this._executeStreamGeneration(session, lastUserContent, userId)) {
+        for await (const update of this._executeStreamGeneration(session, lastUserContent, userId, 'regenerate')) {
              if (update.isFinal) {
                 accumulatedText = update.text;
             }
@@ -246,12 +249,26 @@ export class SimpleChat {
     /**
      * 通用流式生成逻辑 (Private)
      */
-    private async *_executeStreamGeneration(session: any, userInput: string, userId: string): AsyncGenerator<{
+    private async *_executeStreamGeneration(
+        session: any, 
+        userInput: string, 
+        userId: string, 
+        messageType: 'normal' | 'regenerate' = 'normal'
+    ): AsyncGenerator<{
         text: string;
         isFirst: boolean;
         isFinal: boolean;
         firstResponseMs?: number;
     }> {
+        // [New] Capture history snapshot BEFORE generation
+        const historySnapshot = JSON.stringify(session.history);
+        const executionTrace = { 
+            model: null as string | null, 
+            attempt: null as number | null, 
+            provider: null as string | null,
+            finalContext: null as any
+        };
+
         const previewHistory = (history: OpenAIMessage[], limit = 3) => {
             const tail = history.slice(-limit);
             return tail.map((m) => ({
@@ -289,6 +306,7 @@ export class SimpleChat {
         let accumulatedText = '';
         let lastSentText = '';
         let scheduleState = createInitialStreamScheduleState();
+        let enhancedInput = '';
 
         try {
             // Resolve User Preference -> Tier -> Channel
@@ -317,7 +335,7 @@ export class SimpleChat {
             // So for the turn currently being generated: targetTurn = session.turnCount + 1.
             
             const targetTurn = (session.turnCount || 0) + 1;
-            const enhancedInput = this._enhancePrompt(userInput, targetTurn);
+            enhancedInput = this._enhancePrompt(userInput, targetTurn);
 
             logger.info({ 
                 kind: 'biz', 
@@ -330,7 +348,8 @@ export class SimpleChat {
             // [Modified] Use contextToLoad (session.history)
             const stream = channel.streamGenerate(contextToLoad, { 
                 engine: session.engine, 
-                userInput: enhancedInput 
+                userInput: enhancedInput,
+                trace: executionTrace // Pass trace object
             });
 
             for await (const chunk of stream) {
@@ -390,6 +409,28 @@ export class SimpleChat {
                 component: COMPONENT, 
                 message: 'Streaming chat completed', 
                 meta: { replyLength: accumulatedText.length, latencyMs: Date.now() - startedAtMs } 
+            });
+
+            // [New] Async Persist to Supabase (Fire-and-Forget)
+            // Extract clean instructions from enhanced input
+            let cleanInstructions = enhancedInput;
+            const instructionMatch = enhancedInput.match(/##系统指令：以下为最高优先级指令。\n([\s\S]*?)\n##用户指令:/);
+            if (instructionMatch && instructionMatch[1]) {
+                cleanInstructions = instructionMatch[1].trim();
+            }
+
+            this.messageRepository.saveMessage({
+                user_id: userId,
+                role_id: session.character?.extensions?.role_id || null,
+                user_input: userInput,
+                bot_reply: accumulatedText,
+                instructions: cleanInstructions,
+                history: executionTrace.finalContext || historySnapshot,
+                model_name: executionTrace.model,
+                attempt_count: executionTrace.attempt,
+                type: messageType
+            }).catch(err => {
+                logger.error({ kind: 'infra', component: COMPONENT, message: 'Message persistence failed', error: err });
             });
         } else {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Streaming returned empty' });

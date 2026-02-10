@@ -149,7 +149,8 @@ export class PipelineChannel implements IAIChannel {
                 });
 
                 // 2. 执行生成 (Wrapped with 3-Stage Timeout)
-                const rawStream = engine.generateStream(userInput);
+                // [Trace] Pass context.trace to engine to capture final context
+                const rawStream = engine.generateStream(userInput, context.trace);
                 
                 // Get timeouts from config/profile
                 const ttftMs = profile.firstchunk_timeout || 7000; // Default 7s if not set
@@ -178,6 +179,15 @@ export class PipelineChannel implements IAIChannel {
                         message: `Pipeline step success`,
                         meta: { pipelineId: this.pipelineId, profileId: profile.id }
                     });
+
+                    // [Modified] Fill Trace Context
+                    if (context && context.trace) {
+                        context.trace.model = profile.model;
+                        context.trace.attempt = i + 1;
+                        //这里的provider不确定是用于记录那个字段，如果是供应啥元数据则不需要，可以删掉
+                        context.trace.provider = profile.provider || 'unknown';
+                    }
+
                     return;
                 } else {
                     // 如果流没内容（比如刚连上就断了，且没抛 TTFT），视为失败
