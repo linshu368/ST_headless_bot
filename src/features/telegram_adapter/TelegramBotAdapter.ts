@@ -32,6 +32,12 @@ export class TelegramBotAdapter {
     // userId -> state (null | 'awaiting_snapshot_name')
     private userStates: Map<string, string> = new Map();
 
+    // Per-User Concurrency Lock: 防止同一用户并发对话
+    // chatId -> 加锁时间戳 (ms)
+    private activeChats: Map<string, number> = new Map();
+    private readonly LOCK_TIMEOUT_MS = 90_000;       // 锁最大存活时间 (兜底防泄漏)
+    private readonly TIP_AUTO_DELETE_MS = 30_000;     // "请等待"提示自动删除时间
+
     constructor(token: string) {
         const requestOptions = {} as NonNullable<TelegramBot.ConstructorOptions['request']>;
         if (config.telegram.proxy) {
@@ -178,7 +184,25 @@ export class TelegramBotAdapter {
                 return;
             }
 
-            // 4. 普通对话处理
+            // 4. 并发锁检查：同一用户同一时刻只允许处理一条对话消息
+            const lockTime = this.activeChats.get(chatId);
+            if (lockTime) {
+                if (Date.now() - lockTime < this.LOCK_TIMEOUT_MS) {
+                    // 用户有正在处理中的消息 → 拒绝并发送自动删除的提示
+                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Concurrent message blocked', meta: { chatId, messageId } });
+                    const tipMsg = await this.bot.sendMessage(msg.chat.id, '⏳ 请等待上一条消息完成');
+                    setTimeout(() => {
+                        this.bot.deleteMessage(msg.chat.id, tipMsg.message_id).catch(() => {});
+                    }, this.TIP_AUTO_DELETE_MS);
+                    return;
+                }
+                // 锁已超时 → 视为泄漏，强制释放
+                logger.warn({ kind: 'sys', component: COMPONENT, message: 'Stale chat lock cleared', meta: { chatId, staleDurationMs: Date.now() - lockTime } });
+                this.activeChats.delete(chatId);
+            }
+
+            // 5. 普通对话处理（加锁）
+            this.activeChats.set(chatId, Date.now());
             const startTime = Date.now();
             try {
                 // 发送 "typing" 状态，提升用户体验
@@ -251,6 +275,9 @@ export class TelegramBotAdapter {
                     meta: { chatId, text: text.slice(0, 50) } 
                 });
                 await this.bot.sendMessage(msg.chat.id, "抱歉，系统暂时出现故障，请稍后再试。");
+            } finally {
+                // 无论成功还是异常，必须释放锁
+                this.activeChats.delete(chatId);
             }
         });
     }
