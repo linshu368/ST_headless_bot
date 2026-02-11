@@ -62,6 +62,9 @@ export class UIHandler {
                 [
                     { text: "🔄 重新生成", callback_data: `regenerate:${messageId}` },
                     { text: "🆕 新的对话", callback_data: `new_chat:${messageId}` }
+                ],
+                [
+                    { text: "💾 保存对话", callback_data: `save_dialogue:${messageId}` }
                 ]
             ]
         };
@@ -71,6 +74,23 @@ export class UIHandler {
         return {
             inline_keyboard: [
                 [{ text: "📚 浏览角色图鉴", url: url }]
+            ]
+        };
+    }
+
+    static createSaveSnapshotKeyboard(): TelegramBot.InlineKeyboardMarkup {
+        return {
+            inline_keyboard: [
+                [{ text: "⚡️ 直接保存", callback_data: "save_snapshot_direct" }]
+            ]
+        };
+    }
+
+    static createSnapshotPreviewKeyboard(snapshotId: string): TelegramBot.InlineKeyboardMarkup {
+        return {
+            inline_keyboard: [
+                [{ text: "🚀 继续聊天", callback_data: `restore_snapshot:${snapshotId}` }],
+                [{ text: "🗑️ 删除记忆", callback_data: `delete_snapshot:${snapshotId}` }]
             ]
         };
     }

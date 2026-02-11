@@ -6,8 +6,9 @@ import { createFetchInterceptor } from '../../../infrastructure/networking/Fetch
 import { logger } from '../../../platform/logger.js';
 import type { SessionMessage, SessionStore } from '../../../core/ports/SessionStore.js';
 import { UpstashSessionStore } from '../../../infrastructure/redis/UpstashSessionStore.js';
-import { supabase } from '../../../infrastructure/supabase/SupabaseClient.js';
+import { SupabaseSnapshotRepository, type ChatSnapshot } from '../../../infrastructure/repositories/SupabaseSnapshotRepository.js';
 import { mapDbRowToCharacterV2, type RoleDataRow } from '../../../infrastructure/supabase/CharacterMapper.js';
+import { supabase } from '../../../infrastructure/supabase/SupabaseClient.js';
 
 const COMPONENT = 'SessionManager';
 
@@ -36,6 +37,7 @@ export interface ChatSession {
  */
 export class SessionManager {
     private sessionStore: SessionStore | null = null;
+    private snapshotRepository: SupabaseSnapshotRepository;
 
     constructor() {
         if (config.redis.restUrl && config.redis.token) {
@@ -49,6 +51,7 @@ export class SessionManager {
         } else {
             logger.info({ kind: 'biz', component: COMPONENT, message: 'Redis store disabled' });
         }
+        this.snapshotRepository = new SupabaseSnapshotRepository();
     }
 
     /**
@@ -493,5 +496,114 @@ export class SessionManager {
         } catch (error) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to set user model mode', error });
         }
+    }
+
+    /**
+     * Public wrapper: Load character data by roleId
+     */
+    async loadCharacterByRoleId(roleId: string): Promise<any> {
+        return this._loadCharacter(roleId);
+    }
+
+    /**
+     * Create a snapshot of the current session
+     * snapshot_name format: "{YYYYMMDD_HHMMSS}_{userLabel}_{角色名}"
+     * @param userLabel 用户自定义名称，直接保存时传 "未命名"
+     */
+    async createSnapshot(userId: string, userLabel: string): Promise<string | null> {
+        const session = await this.getOrCreateSession(userId);
+        if (!session.history || session.history.length === 0) {
+            return null;
+        }
+
+        const roleId = session.character?.extensions?.role_id || config.supabase.defaultRoleId;
+        const characterTitle = session.character?.extensions?.title || session.character?.name || '未知角色';
+        
+        // 生成时间戳: YYYYMMDD_HHMMSS
+        const now = new Date();
+        const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+        const fullName = `${ts}_${userLabel}_${characterTitle}`;
+        
+        return await this.snapshotRepository.createSnapshot(
+            userId, 
+            roleId, 
+            fullName, 
+            session.history
+        );
+    }
+
+    /**
+     * Get all snapshots for a user
+     */
+    async getSnapshots(userId: string): Promise<ChatSnapshot[]> {
+        return await this.snapshotRepository.getSnapshots(userId);
+    }
+
+    /**
+     * Get a specific snapshot
+     */
+    async getSnapshot(snapshotId: string): Promise<ChatSnapshot | null> {
+        return await this.snapshotRepository.getSnapshot(snapshotId);
+    }
+
+    /**
+     * Restore a snapshot into a NEW session
+     */
+    async restoreSnapshot(userId: string, snapshotId: string): Promise<boolean> {
+        // 1. Fetch snapshot
+        const snapshot = await this.snapshotRepository.getSnapshot(snapshotId);
+        if (!snapshot) return false;
+
+        // 2. Load associated character
+        const character = await this._loadCharacter(snapshot.role_id);
+        if (!character) return false;
+
+        // 3. Generate NEW Session ID
+        const newSessionId = `sess_${userId}_${Date.now()}_snap`;
+
+        // 4. Prepare Redis Data
+        if (this.sessionStore) {
+            try {
+                // Update pointers to new session
+                await this.sessionStore.setCurrentSessionId(userId, newSessionId);
+                await this.sessionStore.setLastSessionId(userId, newSessionId);
+
+                // Set session metadata (Reset turn_count to 0 as requested)
+                await this.sessionStore.setSessionData(newSessionId, {
+                    session_id: newSessionId,
+                    user_id: userId,
+                    role_id: snapshot.role_id,
+                    turn_count: 0, // Reset turn count
+                    post_link: character.extensions?.post_link,
+                    avatar: character.extensions?.avatar,
+                });
+
+                // Restore history
+                if (snapshot.history && snapshot.history.length > 0) {
+                    await this.sessionStore.setMessages(newSessionId, snapshot.history);
+                }
+
+                logger.info({ 
+                    kind: 'biz', 
+                    component: COMPONENT, 
+                    message: 'Snapshot restored to new session', 
+                    meta: { userId, snapshotId, newSessionId } 
+                });
+                return true;
+
+            } catch (error) {
+                logger.error({ kind: 'biz', component: COMPONENT, message: 'Failed to restore snapshot', error });
+                return false;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Delete a snapshot
+     */
+    async deleteSnapshot(snapshotId: string): Promise<boolean> {
+        return await this.snapshotRepository.deleteSnapshot(snapshotId);
     }
 }

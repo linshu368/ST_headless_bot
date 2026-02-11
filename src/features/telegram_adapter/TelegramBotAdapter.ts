@@ -27,6 +27,10 @@ export class TelegramBotAdapter {
     private isPolling: boolean = false;
     private processedMessageIds: Set<number> = new Set();
     private readonly MAX_PROCESSED_IDS = 1000;
+    
+    // User State Management for Snapshot Naming
+    // userId -> state (null | 'awaiting_snapshot_name')
+    private userStates: Map<string, string> = new Map();
 
     constructor(token: string) {
         const requestOptions = {} as NonNullable<TelegramBot.ConstructorOptions['request']>;
@@ -162,13 +166,19 @@ export class TelegramBotAdapter {
                  if (text === '🎭 选择角色') {
                      await this._handleRoleSelection(chatId);
                  } else {
-                     // TODO: History
-                     await this.bot.sendMessage(chatId, "功能开发中...");
+                     await this._handleListSnapshots(chatId);
                  }
                  return;
             }
 
-            // 3. 普通对话处理
+            // 3. 状态机拦截 (快照命名)
+            const userState = this.userStates.get(chatId);
+            if (userState === 'awaiting_snapshot_name') {
+                await this._handleSnapshotNaming(chatId, text);
+                return;
+            }
+
+            // 4. 普通对话处理
             const startTime = Date.now();
             try {
                 // 发送 "typing" 状态，提升用户体验
@@ -256,9 +266,15 @@ export class TelegramBotAdapter {
         switch (command) {
             case '/start':
                 const args = commandText.split(' ');
-                if (args.length > 1 && args[1].startsWith('role_')) {
-                    const roleId = args[1].replace('role_', '');
-                    await this._handleStartRole(chatId, roleId);
+                if (args.length > 1) {
+                    const payload = args[1];
+                    if (payload.startsWith('role_')) {
+                        const roleId = payload.replace('role_', '');
+                        await this._handleStartRole(chatId, roleId);
+                    } else if (payload.startsWith('snap_')) {
+                        const snapshotId = payload.replace('snap_', '');
+                        await this._handleSnapshotPreview(chatId, snapshotId);
+                    }
                 } else {
                     // 1. 发送欢迎语 + 底部按钮
                     await this.bot.sendMessage(chatId, config.telegram.welcome_message, {
@@ -352,12 +368,87 @@ export class TelegramBotAdapter {
 💬 **对话功能**
 • 直接发送消息与AI角色对话
 
+💾 **存档功能**
+• 点击对话下方的 [💾 保存对话] 可保存当前进度
+• 点击 [🗂 历史聊天] 可浏览和恢复存档
+
 ⚙️ **设置**
 • 点击“⚙️ 设置” 可切换AI回复模式（快餐/剧情）
 
 💡 更多功能开发中，敬请期待...`;
         
         await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+    }
+
+    private async _handleListSnapshots(chatId: string): Promise<void> {
+        const snapshots = await this.sessionManager.getSnapshots(chatId);
+        
+        if (snapshots.length === 0) {
+            await this.bot.sendMessage(chatId, "📭 暂无历史存档");
+            return;
+        }
+
+        const botUsername = (await this.bot.getMe()).username;
+        let messageText = "🗂 <b>历史对话存档</b>\n\n";
+
+        snapshots.forEach((snap) => {
+            const line = `<a href="https://t.me/${botUsername}?start=snap_${snap.id}">${snap.snapshot_name}</a>\n`;
+            messageText += line;
+        });
+
+        await this.bot.sendMessage(chatId, messageText, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+        });
+    }
+
+    private async _handleSnapshotNaming(chatId: string, name: string): Promise<void> {
+        // Clear state
+        this.userStates.delete(chatId);
+
+        // Execute Save
+        const resultId = await this.sessionManager.createSnapshot(chatId, name);
+        
+        if (resultId) {
+            await this.bot.sendMessage(chatId, `✅ 对话 **${name}** 已保存！`, { parse_mode: 'Markdown' });
+        } else {
+            await this.bot.sendMessage(chatId, "❌ 保存失败：当前没有可保存的对话。");
+        }
+    }
+
+    private async _handleSnapshotPreview(chatId: string, snapshotId: string): Promise<void> {
+        const snapshot = await this.sessionManager.getSnapshot(snapshotId);
+        
+        if (!snapshot) {
+            await this.bot.sendMessage(chatId, "⚠️ 该记忆似乎已经消散了...");
+            return;
+        }
+
+        // Step 1: Send Character Preview Card (if post_link exists)
+        try {
+            const character = await this.sessionManager.loadCharacterByRoleId(snapshot.role_id);
+            const postLink = character?.extensions?.post_link;
+            if (postLink) {
+                await this.bot.sendMessage(chatId, `<a href="${postLink}">📼 ${snapshot.snapshot_name}</a>`, {
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: false,
+                });
+            }
+        } catch (error) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to load character for snapshot preview', error });
+            // Non-fatal: continue without preview card
+        }
+
+        // Step 2: Send last assistant message + action buttons
+        const lastAssistantMsg = snapshot.history.slice().reverse().find(m => m.role === 'assistant');
+        const previewContent = lastAssistantMsg 
+            ? (typeof lastAssistantMsg.content === 'string' ? lastAssistantMsg.content : "...") 
+            : "(暂无对话记录)";
+
+        await this.bot.sendMessage(chatId, previewContent, {
+            disable_web_page_preview: true,
+            reply_markup: UIHandler.createSnapshotPreviewKeyboard(snapshotId)
+        });
     }
 
     private async _handleSettings(chatId: string): Promise<void> {
@@ -523,12 +614,81 @@ export class TelegramBotAdapter {
 
                     await this.bot.answerCallbackQuery(query.id, { text: '已开启新对话' });
                     break;
+
+                case 'save_dialogue':
+                    // Prompt for name
+                    this.userStates.set(chatId, 'awaiting_snapshot_name');
+                    await this.bot.sendMessage(chatId, "💾 请发送本次存档的名称\n\n或者点击下方按钮自动命名保存：", {
+                        reply_markup: UIHandler.createSaveSnapshotKeyboard()
+                    });
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'save_snapshot_direct':
+                    // 直接保存：用户命名部分为 "未命名"，时间戳由 SessionManager 自动生成
+                    await this._handleSnapshotNaming(chatId, '未命名');
+                    
+                    // Remove the button
+                    if (query.message?.message_id) {
+                        await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                    }
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'list_snapshots':
+                    if (query.message?.message_id) {
+                        await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                    }
+                    await this._handleListSnapshots(chatId);
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'delete_snapshot': // Format: delete_snapshot:{id}
+                    // Extract ID is done via params earlier, but here we need to parse if it's "delete_snapshot:123"
+                    // In handleCallbackQuery, action is split by :, so params[0] is id.
+                    // But wait, the switch uses action.
+                    // The action parsing logic is: const action = query.data.split(':')[0];
+                    // So for "delete_snapshot:123", action is "delete_snapshot". Correct.
+                    if (params.length > 0) {
+                        const snapId = params[0];
+                        const success = await this.sessionManager.deleteSnapshot(snapId);
+                        if (success) {
+                            await this.bot.answerCallbackQuery(query.id, { text: "🗑️ 记忆已删除" });
+                            // Refresh list or delete message
+                            if (query.message?.message_id) {
+                                await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                            }
+                            await this._handleListSnapshots(chatId);
+                        } else {
+                            await this.bot.answerCallbackQuery(query.id, { text: "❌ 删除失败" });
+                        }
+                    }
+                    break;
+
+                case 'restore_snapshot':
+                    if (params.length > 0) {
+                        const snapId = params[0];
+                        const success = await this.sessionManager.restoreSnapshot(chatId, snapId);
+                        if (success) {
+                            await this.bot.answerCallbackQuery(query.id, { text: '✅ 记忆已恢复，请继续对话' });
+                            // 只移除按钮，保留消息内容（角色卡预览 + 最后一条对话），方便用户看到上下文后继续对话
+                            if (query.message?.message_id) {
+                                await this.bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+                                    chat_id: chatId,
+                                    message_id: query.message.message_id
+                                }).catch(() => {});
+                            }
+                        } else {
+                            await this.bot.answerCallbackQuery(query.id, { text: '❌ 恢复失败' });
+                        }
+                    }
+                    break;
             }
-            } catch (error) {
-                logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
-                // Prevent crash if answerCallbackQuery fails due to network issues
-                await this.bot.answerCallbackQuery(query.id, { text: '操作失败，请重试' }).catch(() => {});
-            }
+        } catch (error) {
+            logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
+            // Prevent crash if answerCallbackQuery fails due to network issues
+            await this.bot.answerCallbackQuery(query.id, { text: '操作失败，请重试' }).catch(() => {});
+        }
     }
 
     private async _updateSettingsMessage(query: TelegramBot.CallbackQuery): Promise<void> {
