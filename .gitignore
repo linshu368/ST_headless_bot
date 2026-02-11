@@ -74,3 +74,6 @@ logs/
 
 # 忽略 Git 运维工具生成的日志
 ops/git/logs/
+
+# 忽略本地 npm 代理配置（防止部署环境使用本地代理）
+.npmrc
