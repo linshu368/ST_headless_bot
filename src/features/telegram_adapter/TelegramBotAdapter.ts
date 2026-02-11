@@ -260,9 +260,19 @@ export class TelegramBotAdapter {
                     const roleId = args[1].replace('role_', '');
                     await this._handleStartRole(chatId, roleId);
                 } else {
-                    await this.bot.sendMessage(chatId, "欢迎！我是 Seraphina。直接发送消息即可开始对话。", {
-                        reply_markup: UIHandler.createMainMenuKeyboard()
+                    // 1. 发送欢迎语 + 底部按钮
+                    await this.bot.sendMessage(chatId, config.telegram.welcome_message, {
+                        parse_mode: 'Markdown', // 确保 config 中的文案支持 Markdown
+                        reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl)
                     });
+
+                    // 2. 获取当前会话（包含默认角色）
+                    const session = await this.sessionManager.getOrCreateSession(chatId);
+                    
+                    // 3. 发送角色预览 + 开场白
+                    if (session.character) {
+                        await this._sendCharacterGreeting(chatId, session.character);
+                    }
                 }
                 break;
             
@@ -299,35 +309,39 @@ export class TelegramBotAdapter {
              // 1. Switch Character
             const character = await this.sessionManager.switchCharacter(chatId, roleId);
             
-            // 2. Construct Preview Message
-            // Ensure post_link is valid
-            const postLink = character.extensions?.post_link;
-            
-            const firstMes = character.first_mes || "你好！";
-            
-            logger.info({ kind: 'biz', component: COMPONENT, message: 'Role started', meta: { roleId, postLink } });
+            logger.info({ kind: 'biz', component: COMPONENT, message: 'Role started', meta: { roleId } });
 
-            // 3. Send Message
-            // Step 1: Send Preview Card (if link exists)
-            if (postLink) {
-                // Sending link with preview enabled
-                // Text can be customized, e.g., "Returning to Channel..." or hidden character name
-                await this.bot.sendMessage(chatId, `<a href="${postLink}">回到角色卡频道</a>`, {
-                    parse_mode: 'HTML',
-                    disable_web_page_preview: false,
-                });
-            }
-
-            // Step 2: Send First Message
-            await this.bot.sendMessage(chatId, firstMes, {
-                disable_web_page_preview: true, // Disable preview for first message to avoid double previews
-                reply_markup: UIHandler.createMainMenuKeyboard()
-            });
+            // 2. Send Greeting (Preview + First Message)
+            await this._sendCharacterGreeting(chatId, character);
 
         } catch (error) {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Role switch failed', error });
             await this.bot.sendMessage(chatId, "抱歉，角色切换失败，请稍后再试。");
         }
+    }
+
+    /**
+     * 发送角色问候语（预览卡片 + 开场白）
+     */
+    private async _sendCharacterGreeting(chatId: string, character: any): Promise<void> {
+        // Ensure post_link is valid
+        const postLink = character.extensions?.post_link;
+        const firstMes = character.first_mes || "你好！";
+
+        // Step 1: Send Preview Card (if link exists)
+        if (postLink) {
+            // Sending link with preview enabled
+            await this.bot.sendMessage(chatId, `<a href="${postLink}">回到角色卡频道</a>`, {
+                parse_mode: 'HTML',
+                disable_web_page_preview: false,
+            });
+        }
+
+        // Step 2: Send First Message
+        await this.bot.sendMessage(chatId, firstMes, {
+            disable_web_page_preview: true, // Disable preview for first message to avoid double previews
+            reply_markup: UIHandler.createMainMenuKeyboard()
+        });
     }
 
     private async _handleHelp(chatId: string): Promise<void> {
