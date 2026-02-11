@@ -146,7 +146,7 @@ export class SessionManager {
         }
 
         // Determine Role ID from Session Data
-        const currentRoleId = existingSessionData?.role_id as string | undefined;
+        const currentRoleId = (existingSessionData?.role_id as string | undefined) || config.supabase.defaultRoleId;
         const character = await this._loadCharacter(currentRoleId);
 
         const session = await this._createSession(userId, character, existingSessionId, existingHistory, existingSessionData);
