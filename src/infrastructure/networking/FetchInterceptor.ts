@@ -243,6 +243,11 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                     requestBody.stream = true;
                 }
 
+                // [Modified] Remove max_tokens to allow model to determine length
+                if (requestBody.max_tokens) {
+                    delete requestBody.max_tokens;
+                }
+
                 if (targetUrl === openRouterChatUrl) {
                     requestBody.provider = {
                         sort: 'latency',

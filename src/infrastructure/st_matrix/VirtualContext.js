@@ -381,7 +381,7 @@ export function createVirtualContext({ configProvider, configUpdater, fetchImple
             context_template: 'Default',
             chat_completion_source: 'openai',
             openai_max_context: 4096,
-            openai_max_tokens: 300,
+            // openai_max_tokens: 10000, // Removed per user request
             openai_temperature: 0.7,
             prompts: [
                 { 'name': 'Main Prompt', 'system_prompt': true, 'role': 'system', 'content': 'Write {{char}}\'s next reply in a fictional chat between {{charIfNotGroup}} and {{user}}.', 'identifier': 'main' },
