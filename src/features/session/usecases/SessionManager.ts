@@ -5,6 +5,7 @@ import { STEngineAdapter } from '../../../infrastructure/st_matrix/STEngineAdapt
 import { createFetchInterceptor } from '../../../infrastructure/networking/FetchInterceptor.js';
 import { logger } from '../../../platform/logger.js';
 import type { SessionMessage, SessionStore } from '../../../core/ports/SessionStore.js';
+import { resolveSessionId as resolveSessionIdPure } from './sessionResolution.js';
 import { UpstashSessionStore } from '../../../infrastructure/redis/UpstashSessionStore.js';
 import { SupabaseSnapshotRepository, type ChatSnapshot } from '../../../infrastructure/repositories/SupabaseSnapshotRepository.js';
 import { mapDbRowToCharacterV2, type RoleDataRow } from '../../../infrastructure/supabase/CharacterMapper.js';
@@ -52,6 +53,32 @@ export class SessionManager {
             logger.info({ kind: 'biz', component: COMPONENT, message: 'Redis store disabled' });
         }
         this.snapshotRepository = new SupabaseSnapshotRepository();
+    }
+
+    /**
+     * Helper: Update session metadata with merge semantics.
+     * Keeps callsites small and consistent, and centralizes error handling.
+     */
+    private async _updateSessionData(
+        sessionId: string,
+        updates: Record<string, unknown>
+    ): Promise<void> {
+        if (!this.sessionStore) return;
+        try {
+            const currentData = (await this.sessionStore.getSessionData(sessionId)) || {};
+            await this.sessionStore.setSessionData(sessionId, {
+                ...currentData,
+                ...updates,
+            });
+        } catch (error) {
+            logger.warn({
+                kind: 'biz',
+                component: COMPONENT,
+                message: 'Failed to update session metadata',
+                error,
+                meta: { sessionId, keys: Object.keys(updates) },
+            });
+        }
     }
 
     /**
@@ -123,21 +150,63 @@ export class SessionManager {
     }
 
     /**
+     * Core: Resolve session ID with "experience window" semantics.
+     * 
+     * Business Rule:
+     * - session_id represents "one complete user experience" (体验窗口)
+     * - If user has been active within the timeout window → reuse existing session_id
+     * - If user has been inactive beyond the timeout → create new session_id
+     * - Actions like new_chat, switch_character, restore_snapshot do NOT create new session_id
+     *   as long as the user is within the same experience window.
+     * 
+     * Migration: If no lastActive record exists (pre-deployment sessions),
+     *            the session is treated as still active to avoid disruption.
+     */
+    private async _resolveSessionId(userId: string): Promise<{ sessionId: string; isNew: boolean; expiredSessionId?: string }> {
+        if (!this.sessionStore) {
+            return { sessionId: `sess_${userId}_${Date.now()}`, isNew: true };
+        }
+        const result = await resolveSessionIdPure(
+            this.sessionStore,
+            userId,
+            config.session.timeoutMinutes
+        );
+        if (result.isNew && result.expiredSessionId) {
+            logger.info({
+                kind: 'biz',
+                component: COMPONENT,
+                message: 'Session expired, new experience window',
+                meta: { userId, oldSessionId: result.expiredSessionId, newSessionId: result.sessionId }
+            });
+        } else if (result.isNew) {
+            logger.info({
+                kind: 'biz',
+                component: COMPONENT,
+                message: 'First session created',
+                meta: { userId, sessionId: result.sessionId }
+            });
+        }
+        return result;
+    }
+
+    /**
      * Get session data from Redis and reconstruct the session object
      */
     async getOrCreateSession(userId: string): Promise<ChatSession> {
         logger.debug({ kind: 'biz', component: COMPONENT, message: 'Resolving session from store' });
-        let existingSessionId: string | null = null;
+
+        // 1. Resolve session ID (handles expiry + touch)
+        const { sessionId, isNew, expiredSessionId } = await this._resolveSessionId(userId);
+
+        // 2. Load existing data, or carry over role preference from expired session
         let existingHistory: OpenAIMessage[] = [];
         let existingSessionData: Record<string, unknown> | null = null;
-        
-        if (this.sessionStore) {
+
+        if (!isNew && this.sessionStore) {
+            // Active session → load full state
             try {
-                existingSessionId = await this.sessionStore.getCurrentSessionId(userId);
-                if (existingSessionId) {
-                    existingHistory = await this.sessionStore.getMessages(existingSessionId);
-                    existingSessionData = await this.sessionStore.getSessionData(existingSessionId);
-                }
+                existingHistory = await this.sessionStore.getMessages(sessionId);
+                existingSessionData = await this.sessionStore.getSessionData(sessionId);
             } catch (error) {
                 logger.warn({
                     kind: 'biz',
@@ -146,13 +215,35 @@ export class SessionManager {
                     error,
                 });
             }
+        } else if (isNew && expiredSessionId && this.sessionStore) {
+            // Session expired → fresh history, but preserve role preference for continuity
+            try {
+                const prevData = await this.sessionStore.getSessionData(expiredSessionId);
+                if (prevData?.role_id) {
+                    existingSessionData = { role_id: prevData.role_id };
+                    logger.info({
+                        kind: 'biz',
+                        component: COMPONENT,
+                        message: 'Role preference carried over from expired session',
+                        meta: { expiredSessionId, roleId: prevData.role_id }
+                    });
+                }
+            } catch (error) {
+                logger.warn({
+                    kind: 'biz',
+                    component: COMPONENT,
+                    message: 'Failed to carry over role preference from expired session',
+                    error,
+                });
+            }
         }
 
-        // Determine Role ID from Session Data
+        // 3. Determine Role ID from Session Data
         const currentRoleId = (existingSessionData?.role_id as string | undefined) || config.supabase.defaultRoleId;
         const character = await this._loadCharacter(currentRoleId);
 
-        const session = await this._createSession(userId, character, existingSessionId, existingHistory, existingSessionData);
+        // 4. Build session object
+        const session = await this._createSession(userId, character, sessionId, existingHistory, existingSessionData);
         return session;
     }
 
@@ -162,7 +253,7 @@ export class SessionManager {
     private async _createSession(
         userId: string,
         character: any,
-        existingSessionId?: string | null,
+        sessionId: string,
         existingHistory?: OpenAIMessage[],
         existingSessionData?: Record<string, unknown> | null
     ): Promise<ChatSession> {
@@ -240,39 +331,14 @@ export class SessionManager {
         // NOTE: We do NOT inject first_mes into history here anymore.
         // It should be constructed dynamically during prompt assembly to keep Redis clean.
 
-        const sessionId = existingSessionId || `sess_${userId}_${Date.now()}`;
-        if (!existingSessionId) {
-             logger.info({ 
-                kind: 'biz', 
-                component: COMPONENT, 
-                message: 'Session created', 
-                meta: { sessionId, characterName: character.name } 
-            });
-        }
-
+        // Persist session metadata (session ID pointers already managed by _resolveSessionId)
         if (this.sessionStore) {
-            try {
-                // Only set these if it's a new session or we want to ensure consistency
-                await this.sessionStore.setCurrentSessionId(userId, sessionId);
-                await this.sessionStore.setLastSessionId(userId, sessionId);
-                await this.sessionStore.setSessionData(sessionId, {
-                    session_id: sessionId,
-                    user_id: userId,
-                    // character_name removed as requested (use role_id as unique identifier)
-                    role_id: character.extensions?.role_id,
-                    turn_count: turnCount,
-                });
-                if (history.length > 0 && (!existingHistory || existingHistory.length === 0)) {
-                     await this.sessionStore.setMessages(sessionId, history);
-                }
-            } catch (error) {
-                logger.warn({
-                    kind: 'biz',
-                    component: COMPONENT,
-                    message: 'Failed to persist session metadata',
-                    error,
-                });
-            }
+            await this._updateSessionData(sessionId, {
+                session_id: sessionId,
+                user_id: userId,
+                role_id: character.extensions?.role_id,
+                turn_count: turnCount,
+            });
         }
 
         return {
@@ -295,59 +361,21 @@ export class SessionManager {
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Switching character', meta: { userId, roleId } });
 
         // 1. Load New Character
-        let character = await this._loadCharacter(roleId);
-        
-        // If loaded character doesn't match requested roleId (fallback occurred), try default
-        const loadedRoleId = character.extensions?.role_id;
-        if (loadedRoleId !== roleId && roleId !== config.supabase.defaultRoleId) {
-             // If we failed to load specific role, try loading default role explicitly
-             // But _loadCharacter already falls back to Mock which is acceptable.
-             // We just proceed with whatever character we got.
-        }
+        const character = await this._loadCharacter(roleId);
 
-        // 2. Get Current Session
-        // We only need the Session ID to update Redis
-        let sessionId: string | null = null;
+        // 2. Resolve Session ID (respects experience window, auto-touch)
+        const { sessionId } = await this._resolveSessionId(userId);
+
+        // 3. Clear History & Update Metadata
         if (this.sessionStore) {
-            sessionId = await this.sessionStore.getCurrentSessionId(userId);
-        }
-
-        if (!sessionId) {
-            // No session exists, just return character (getOrCreateSession will handle it next time)
-            // But we should probably preset the role_id in Redis if possible?
-            // Since we can't set session data without a session ID, we defer.
-            // But wait, if user sends /start role_x, they might not have a session.
-            // In that case, we want to ensure next getOrCreateSession picks this role.
-            // We can set a "pending role preference"? 
-            // Or just create a session now?
-            // Let's create a fresh session.
-            await this.getOrCreateSession(userId); // This creates a session with whatever default
-            // Then we recurse or just proceed?
-            // Let's just proceed to update the newly created session.
-            if (this.sessionStore) {
-                sessionId = await this.sessionStore.getCurrentSessionId(userId);
-            }
-        }
-
-        if (sessionId && this.sessionStore) {
             try {
-                // 3. Clear History
                 await this.sessionStore.setMessages(sessionId, []);
-
-                // 4. Update Metadata
-                // Get current data to preserve turn_count
-                const currentData = await this.sessionStore.getSessionData(sessionId) || {};
-                await this.sessionStore.setSessionData(sessionId, {
-                    ...currentData,
-                    // character_name removed
+                await this._updateSessionData(sessionId, {
                     role_id: character.extensions?.role_id,
                     post_link: character.extensions?.post_link,
                     avatar: character.extensions?.avatar,
-                    // turn_count is preserved from currentData
                 });
-                
                 logger.info({ kind: 'biz', component: COMPONENT, message: 'Session updated for new character', meta: { sessionId, roleId: character.extensions?.role_id } });
-
             } catch (error) {
                 logger.error({ kind: 'biz', component: COMPONENT, message: 'Failed to update session for character switch', error });
                 throw error;
@@ -381,10 +409,8 @@ export class SessionManager {
             }
 
             if (turnCountUpdated) {
-                const currentData = await this.sessionStore.getSessionData(session.sessionId) || {};
-                await this.sessionStore.setSessionData(session.sessionId, {
-                    ...currentData,
-                    turn_count: session.turnCount
+                await this._updateSessionData(session.sessionId, {
+                    turn_count: session.turnCount,
                 });
             }
         } catch (error) {
@@ -467,16 +493,14 @@ export class SessionManager {
      */
     async resetSessionHistory(userId: string): Promise<void> {
         if (!this.sessionStore) return;
-        
-        const sessionId = await this.sessionStore.getCurrentSessionId(userId);
-        if (!sessionId) return;
+
+        // Resolve session ID (also touches lastActive)
+        const { sessionId } = await this._resolveSessionId(userId);
 
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Resetting session history', meta: { userId, sessionId } });
-        
-        // Clear messages
+
+        // Clear messages (metadata preserved in separate sessionData key)
         await this.sessionStore.setMessages(sessionId, []);
-        
-        // Metadata (turn_count, role_id) is preserved in separate sessionData key
     }
 
     async getUserModelMode(userId: string): Promise<string> {
@@ -547,7 +571,8 @@ export class SessionManager {
     }
 
     /**
-     * Restore a snapshot into a NEW session
+     * Restore a snapshot into the current session (reuse experience window).
+     * No longer creates a new session_id — the snapshot's history replaces the current one.
      */
     async restoreSnapshot(userId: string, snapshotId: string): Promise<boolean> {
         // 1. Fetch snapshot
@@ -558,36 +583,29 @@ export class SessionManager {
         const character = await this._loadCharacter(snapshot.role_id);
         if (!character) return false;
 
-        // 3. Generate NEW Session ID
-        const newSessionId = `sess_${userId}_${Date.now()}_snap`;
+        // 3. Resolve Session ID (reuse current experience window, auto-touch)
+        const { sessionId } = await this._resolveSessionId(userId);
 
-        // 4. Prepare Redis Data
+        // 4. Replace history + update metadata in current session
         if (this.sessionStore) {
             try {
-                // Update pointers to new session
-                await this.sessionStore.setCurrentSessionId(userId, newSessionId);
-                await this.sessionStore.setLastSessionId(userId, newSessionId);
+                // Replace history with snapshot's history
+                await this.sessionStore.setMessages(sessionId, snapshot.history || []);
 
-                // Set session metadata (Reset turn_count to 0 as requested)
-                await this.sessionStore.setSessionData(newSessionId, {
-                    session_id: newSessionId,
-                    user_id: userId,
+                // Update session metadata (reset turn_count to match snapshot history)
+                const restoredTurnCount = Math.floor((snapshot.history?.length || 0) / 2);
+                await this._updateSessionData(sessionId, {
                     role_id: snapshot.role_id,
-                    turn_count: 0, // Reset turn count
+                    turn_count: restoredTurnCount,
                     post_link: character.extensions?.post_link,
                     avatar: character.extensions?.avatar,
                 });
 
-                // Restore history
-                if (snapshot.history && snapshot.history.length > 0) {
-                    await this.sessionStore.setMessages(newSessionId, snapshot.history);
-                }
-
                 logger.info({ 
                     kind: 'biz', 
                     component: COMPONENT, 
-                    message: 'Snapshot restored to new session', 
-                    meta: { userId, snapshotId, newSessionId } 
+                    message: 'Snapshot restored into current session', 
+                    meta: { userId, snapshotId, sessionId } 
                 });
                 return true;
 
@@ -596,7 +614,7 @@ export class SessionManager {
                 return false;
             }
         }
-        
+
         return false;
     }
 

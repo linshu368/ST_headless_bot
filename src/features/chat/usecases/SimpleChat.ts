@@ -25,8 +25,8 @@ export class SimpleChat {
     private channelRegistry: IChannelRegistry;
     private messageRepository: IMessageRepository;
 
-    constructor(channelRegistry: IChannelRegistry, messageRepository: IMessageRepository) {
-        this.sessionManager = new SessionManager();
+    constructor(sessionManager: SessionManager, channelRegistry: IChannelRegistry, messageRepository: IMessageRepository) {
+        this.sessionManager = sessionManager;
         this.channelRegistry = channelRegistry;
         this.messageRepository = messageRepository;
     }

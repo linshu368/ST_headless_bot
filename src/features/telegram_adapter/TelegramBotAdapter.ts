@@ -67,11 +67,11 @@ export class TelegramBotAdapter {
              logger.error({ kind: 'sys', component: COMPONENT, message: 'General bot error', error });
         });
         
-        // Initialize dependencies
+        // Initialize dependencies (SessionManager is singleton — shared across all components)
+        this.sessionManager = new SessionManager();
         const channelRegistry = new ChannelRegistry();
         const messageRepository = new SupabaseMessageRepository();
-        this.simpleChat = new SimpleChat(channelRegistry, messageRepository);
-        this.sessionManager = new SessionManager(); // Initialize SessionManager
+        this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository);
     }
 
     /**

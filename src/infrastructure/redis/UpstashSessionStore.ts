@@ -79,6 +79,10 @@ export class UpstashSessionStore implements SessionStore {
         return `${this.namespace}:user_pref:${userId}:model_mode`;
     }
 
+    private keyLastActive(userId: string): string {
+        return `${this.namespace}:user_active:${userId}`;
+    }
+
     private encode(value: string): string {
         return encodeURIComponent(value);
     }
@@ -375,5 +379,26 @@ export class UpstashSessionStore implements SessionStore {
     ): Promise<void> {
         const key = this.keyUserModelMode(userId);
         await this.cmd('set', key, mode);
+    }
+
+    async getLastActiveTime(userId: string): Promise<number | null> {
+        const key = this.keyLastActive(userId);
+        try {
+            const result = await this.cmd('get', key);
+            const value = this.decodeGetResult(result);
+            if (typeof value === 'number') return value;
+            if (typeof value === 'string') {
+                const num = Number(value);
+                return isNaN(num) ? null : num;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    async setLastActiveTime(userId: string, timestamp: number): Promise<void> {
+        const key = this.keyLastActive(userId);
+        await this.cmd('set', key, String(timestamp));
     }
 }

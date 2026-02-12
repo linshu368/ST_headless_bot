@@ -18,4 +18,8 @@ export interface SessionStore {
 
     getUserModelMode(userId: string): Promise<'basic' | 'standard_a' | 'standard_b'>;
     setUserModelMode(userId: string, mode: 'basic' | 'standard_a' | 'standard_b'): Promise<void>;
+
+    /** User-level last active timestamp (ms) for session expiry */
+    getLastActiveTime(userId: string): Promise<number | null>;
+    setLastActiveTime(userId: string, timestamp: number): Promise<void>;
 }

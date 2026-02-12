@@ -54,6 +54,9 @@ export interface Config {
         interChunk: number;
         total: number;
     };
+    session: {
+        timeoutMinutes: number;
+    };
 }
 
 const config: Config = {
@@ -119,6 +122,9 @@ const config: Config = {
     timeouts: {
         interChunk: Number(process.env.AI_STREAM_INTER_CHUNK_TIMEOUT || '3000'),
         total: Number(process.env.AI_STREAM_TOTAL_TIMEOUT || '15000'),
+    },
+    session: {
+        timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || '30'),
     },
     // --- Step 1: 模拟外部配置数据源 (将来替换为 Supabase) ---
     ai_config_source: {
