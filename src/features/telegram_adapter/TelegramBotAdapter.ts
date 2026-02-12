@@ -9,6 +9,7 @@ import config from '../../platform/config.js';
 import { logger } from '../../platform/logger.js';
 import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
 import { UIHandler } from './UIHandler.js';
+import { SupabaseUserRepository } from '../../infrastructure/repositories/SupabaseUserRepository.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -24,6 +25,7 @@ export class TelegramBotAdapter {
     private bot: TelegramBot;
     private simpleChat: SimpleChat;
     private sessionManager: SessionManager; // Add SessionManager
+    private userRepository: SupabaseUserRepository;
     private isPolling: boolean = false;
     private processedMessageIds: Set<number> = new Set();
     private readonly MAX_PROCESSED_IDS = 1000;
@@ -72,6 +74,7 @@ export class TelegramBotAdapter {
         const channelRegistry = new ChannelRegistry();
         const messageRepository = new SupabaseMessageRepository();
         this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository);
+        this.userRepository = new SupabaseUserRepository();
     }
 
     /**
@@ -144,6 +147,20 @@ export class TelegramBotAdapter {
                         this.processedMessageIds.delete(nextValue);
                     }
                 }
+            }
+
+            // 0.5 维护 bot_users 表（尽量不影响主流程）
+            try {
+                const from = msg.from;
+                await this.userRepository.upsertTelegramUser({
+                    userId: chatId,
+                    username: from?.username ?? null,
+                    firstName: from?.first_name ?? null,
+                    lastName: from?.last_name ?? null,
+                });
+            } catch (error) {
+                // Non-fatal: do not block chat flow
+                logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to upsert bot user (non-fatal)', error, meta: { chatId } });
             }
 
             if (!text) return; // 忽略非文本消息
@@ -524,6 +541,19 @@ export class TelegramBotAdapter {
         if (!query.data) return;
         const chatId = query.message?.chat.id.toString();
         if (!chatId) return;
+
+        // Maintain user row for callback interactions as well (best-effort)
+        try {
+            const from = query.from;
+            await this.userRepository.upsertTelegramUser({
+                userId: chatId,
+                username: from?.username ?? null,
+                firstName: from?.first_name ?? null,
+                lastName: from?.last_name ?? null,
+            });
+        } catch {
+            // ignore
+        }
 
         const action = query.data.split(':')[0];
         const params = query.data.split(':').slice(1);
