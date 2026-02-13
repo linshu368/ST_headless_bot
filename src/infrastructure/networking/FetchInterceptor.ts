@@ -238,12 +238,54 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                         }];
                     }
                 }
-    
+
+                // [FIX] Prompt Reconstruction — ST Core's PromptManager is broken in headless mode.
+                // It produces messages in reverse chronological order with no system prompt.
+                // We fix this here as the last checkpoint before the LLM API:
+                //   1. Reverse the array to restore chronological order
+                //   2. Prepend character.system_prompt as a system message
+                if (Array.isArray(requestBody.messages) && requestBody.messages.length > 0
+                    && requestBody.messages[0].role !== 'system'
+                    && mockState.characters.length > 0) {
+                    
+                    const char = mockState.characters[0];
+                    const systemPrompt = char.data?.system_prompt || char.system_prompt || '';
+                    
+                    // Reverse: ST Core outputs newest-first, we need oldest-first (chronological)
+                    requestBody.messages.reverse();
+
+                    // Prepend system prompt if available
+                    if (systemPrompt) {
+                        requestBody.messages.unshift({
+                            role: 'system',
+                            content: systemPrompt
+                        });
+                    }
+
+                    // Clean up ST-internal metadata fields that LLM APIs don't understand
+                    for (const msg of requestBody.messages) {
+                        delete msg.name;
+                        delete msg.mediaDisplay;
+                        delete msg.mediaIndex;
+                    }
+
+                    logger.info({ 
+                        kind: 'sys', 
+                        component: COMPONENT, 
+                        message: 'Prompt reconstructed (reversed + system_prompt prepended)', 
+                        meta: { 
+                            totalMessages: requestBody.messages.length,
+                            hasSystemPrompt: !!systemPrompt,
+                            systemPromptPreview: systemPrompt.slice(0, 150)
+                        } 
+                    });
+                }
+
                 if (streamModeEnabled) {
                     requestBody.stream = true;
                 }
 
-                // [Modified] Remove max_tokens to allow model to determine length
+                // Remove max_tokens to allow model to determine length
                 if (requestBody.max_tokens) {
                     delete requestBody.max_tokens;
                 }

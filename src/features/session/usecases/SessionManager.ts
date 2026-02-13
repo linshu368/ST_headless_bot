@@ -286,7 +286,7 @@ export class SessionManager {
                 context_template: 'Default',
                 chat_completion_source: 'openai',
                 openai_max_context: 4096,
-                // openai_max_tokens: 10000, // Removed per user request
+                openai_max_tokens: 10000, 
                 openai_temperature: 0.7,
                 prompts: [
                     { 

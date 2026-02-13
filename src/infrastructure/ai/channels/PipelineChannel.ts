@@ -139,6 +139,19 @@ export class PipelineChannel implements IAIChannel {
             });
 
             try {
+                // 0. Reset engine state before retries to prevent chat pollution.
+                // After a failed step, win.chat contains stale messages from the failed Generate().
+                // Reloading context restores a clean chat state for the next attempt.
+                if (i > 0 && context.contextData) {
+                    logger.info({ 
+                        kind: 'infra', 
+                        component: 'PipelineChannel', 
+                        message: 'Reloading engine context for retry',
+                        meta: { pipelineId: this.pipelineId, step: i + 1 }
+                    });
+                    await engine.loadContext(context.contextData);
+                }
+
                 // 1. 配置 Engine
                 await engine.setConfiguration({
                     main_api: 'openai', // 假设目前都走 OpenAI 兼容协议

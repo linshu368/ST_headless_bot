@@ -76,10 +76,14 @@ export class STEngineAdapter implements ISTEngine {
     async initialize(): Promise<void> {
         logger.info({ kind: 'sys', component: COMPONENT, message: 'Initializing Virtual Context' });
         
+        // [FIX] Pass oai_settings into VirtualContext BEFORE CoreFactory runs.
+        // This ensures ST Core's PromptManager initializes with the correct prompts/prompt_order
+        // from SessionManager, instead of capturing stale hardcoded defaults.
         const context = createVirtualContext({
             configProvider: (selector: string) => this._resolveConfigValue(selector),
             configUpdater: (selector: string, value: any) => this._updateConfigValue(selector, value),
-            fetchImplementation: this.networkHandler
+            fetchImplementation: this.networkHandler,
+            oaiSettings: this.userConfig.oai_settings
         });
 
         // Initialize Core
@@ -678,8 +682,14 @@ export class STEngineAdapter implements ISTEngine {
              await win.selectCharacterById(0);
         }
 
-        // Capture the chat length before generation to detect new messages
-        const initialChatLength = win.chat ? win.chat.length : 0;
+        // [FIX] Snapshot win.chat before Generate to prevent Pipeline retry pollution.
+        // Each Generate('normal') call internally runs sendMessageAsUser() which appends
+        // messages to win.chat. If generation fails and PipelineChannel retries with a
+        // different model, the stale messages from the failed attempt would accumulate.
+        // By snapshotting and restoring on failure, each retry starts from the same clean state.
+        const chatSnapshot = win.chat ? win.chat.map((m: any) => ({ ...m })) : [];
+        const initialChatLength = chatSnapshot.length;
+
         logger.debug({ 
             kind: 'sys', 
             component: COMPONENT, 
@@ -696,19 +706,14 @@ export class STEngineAdapter implements ISTEngine {
             if (e.message && e.message.includes("reading 'prompt'")) {
                 logger.warn({ kind: 'sys', component: COMPONENT, message: 'Suppressing expected ST error', meta: { error: e.message } });
             } else {
-                // 关键：完整暴露原始错误
-                logger.error({ kind: 'sys', component: COMPONENT, message: 'Generate failed', error: e });
+                // Generation failed → restore chat snapshot to prevent state pollution
+                this._restoreChat(win, chatSnapshot);
+                logger.error({ kind: 'sys', component: COMPONENT, message: 'Generate failed, chat restored', error: e });
                 throw e;
             }
         }
         
         // 3. Return the last message
-        // In ST, the last message in the chat array is the one just generated (or the one being streamed)
-        // Note: For streaming, we might need to wait or hook into the stream.
-        // For MVP (non-streaming or pseudo-streaming), we assume Generate() completes when the promise resolves.
-        // However, ST's Generate is async but might return before the stream is done if not awaited properly in our mock.
-        // Assuming our FetchInterceptor awaits the full response, ST should have updated the chat array.
-        
         if (win.chat && win.chat.length > initialChatLength) {
             logger.debug({ 
                 kind: 'sys', 
@@ -720,6 +725,21 @@ export class STEngineAdapter implements ISTEngine {
             return lastMsg;
         }
         
+        // No new messages produced → restore chat snapshot (failed silently)
+        this._restoreChat(win, chatSnapshot);
+        logger.warn({ kind: 'sys', component: COMPONENT, message: 'Generate produced no new messages, chat restored' });
         return null; 
+    }
+
+    /**
+     * Helper: Restore win.chat from a snapshot (in-place mutation to preserve reference).
+     */
+    private _restoreChat(win: any, snapshot: any[]): void {
+        if (win.chat && Array.isArray(win.chat)) {
+            win.chat.length = 0;
+            snapshot.forEach((m: any) => win.chat.push(m));
+        } else {
+            win.chat = [...snapshot];
+        }
     }
 }

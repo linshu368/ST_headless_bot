@@ -374,7 +374,15 @@ export class SimpleChat {
             const stream = channel.streamGenerate(contextToLoad, { 
                 engine: session.engine, 
                 userInput: enhancedInput,
-                trace: executionTrace // Pass trace object
+                trace: executionTrace, // Pass trace object
+                // [FIX] Pass context data for engine state reset between Pipeline retries.
+                // When a pipeline step fails (e.g. TTFT timeout), the engine's win.chat is polluted
+                // with messages from the failed attempt. PipelineChannel needs this data to reload
+                // clean context before retrying with the next model.
+                contextData: {
+                    characters: [session.character],
+                    chat: engineContext
+                }
             });
 
             for await (const chunk of stream) {

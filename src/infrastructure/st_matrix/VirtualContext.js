@@ -100,8 +100,11 @@ const mockLocalForage = {
  * @param {Function} options.configProvider - (key) => value: Callback to get value for a DOM ID
  * @param {Function} options.configUpdater - (key, value) => void: Callback to set value for a DOM ID
  * @param {Function} options.fetchImplementation - The fetch function to inject
+ * @param {Object} [options.oaiSettings] - Custom oai_settings to inject (overrides hardcoded defaults).
+ *   When provided, this becomes window.oai_settings so that CoreFactory's PromptManager
+ *   initializes with the correct prompts/prompt_order from the start.
  */
-export function createVirtualContext({ configProvider, configUpdater, fetchImplementation }) {
+export function createVirtualContext({ configProvider, configUpdater, fetchImplementation, oaiSettings }) {
     
     const uuidv4 = () => {
         return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -373,15 +376,18 @@ export function createVirtualContext({ configProvider, configUpdater, fetchImple
         // Settings Globals
         textgenerationwebui_settings: {},
         koboldai_settings: {},
-        oai_settings: {
-            // [CRITICAL] Default OpenAI Settings
+        // [FIX] Use externally injected oai_settings when provided.
+        // This ensures CoreFactory's PromptManager initializes with the correct
+        // prompts/prompt_order from SessionManager, not stale hardcoded defaults.
+        oai_settings: oaiSettings || {
+            // Fallback defaults (only used if no oaiSettings injected)
             preset_settings_openai: 'Default',
             openai_model: 'gpt-3.5-turbo', 
             system_prompt: 'You are {{char}}. Write a response that stays in character.', 
             context_template: 'Default',
             chat_completion_source: 'openai',
             openai_max_context: 4096,
-            // openai_max_tokens: 10000, // Removed per user request
+            openai_max_tokens: 10000, 
             openai_temperature: 0.7,
             prompts: [
                 { 'name': 'Main Prompt', 'system_prompt': true, 'role': 'system', 'content': 'Write {{char}}\'s next reply in a fictional chat between {{charIfNotGroup}} and {{user}}.', 'identifier': 'main' },
