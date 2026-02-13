@@ -60,6 +60,16 @@ export class UpstashSessionStore implements SessionStore {
         }
     }
 
+    /**
+     * 动态更新历史截断低水位线（由 RuntimeConfigService 驱动）
+     */
+    setHistoryRetentionCount(count: number): void {
+        this.historyRetentionCount = Math.max(1, count);
+        if (this.historyRetentionCount > this.maxHistoryItems) {
+            this.historyRetentionCount = this.maxHistoryItems;
+        }
+    }
+
     private logDebug(message: string, meta?: Record<string, unknown>): void {
         if (!this.debugEnabled) return;
         logger.info({

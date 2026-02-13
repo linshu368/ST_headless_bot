@@ -3,6 +3,7 @@ import type { IAIChannel } from '../../../features/chat/ports/IAIChannel.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { logger } from '../../../platform/logger.js';
 import config from '../../../platform/config.js';
+import { runtimeConfig } from '../../runtime_config/RuntimeConfigService.js';
 
 
 export class PipelineChannel implements IAIChannel {
@@ -126,6 +127,11 @@ export class PipelineChannel implements IAIChannel {
             throw new Error('PipelineChannel requires engine and userInput in context');
         }
 
+        const [interChunkDefaultMs, totalDefaultMs] = await Promise.all([
+            runtimeConfig.getStreamInterChunkTimeout(),
+            runtimeConfig.getStreamTotalTimeout(),
+        ]);
+
         // 顺序执行 Pipeline 中的 Profile
         for (let i = 0; i < this.steps.length; i++) {
             const profile = this.steps[i];
@@ -167,8 +173,8 @@ export class PipelineChannel implements IAIChannel {
                 
                 // Get timeouts from config/profile
                 const ttftMs = profile.firstchunk_timeout || 7000; // Default 7s if not set
-                const interChunkMs = config.timeouts.interChunk;
-                const totalMs = profile.total_timeout || 15000;
+                const interChunkMs = interChunkDefaultMs || config.timeouts.interChunk;
+                const totalMs = profile.total_timeout || totalDefaultMs || config.timeouts.total;
 
                 const managed = this.managedStream(
                     rawStream, 

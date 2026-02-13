@@ -64,7 +64,9 @@ export class SessionManager {
         if (this.sessionStore && this.sessionStore instanceof UpstashSessionStore) {
             try {
                 const maxItems = await runtimeConfig.getMaxHistoryItems();
+                const retentionCount = await runtimeConfig.getHistoryRetentionCount();
                 this.sessionStore.setMaxHistoryItems(maxItems);
+                this.sessionStore.setHistoryRetentionCount(retentionCount);
             } catch {
                 // Non-critical: use existing value
             }
@@ -182,10 +184,11 @@ export class SessionManager {
         if (!this.sessionStore) {
             return { sessionId: `sess_${userId}_${Date.now()}`, isNew: true };
         }
+        const timeoutMinutes = await runtimeConfig.getSessionTimeoutMinutes();
         const result = await resolveSessionIdPure(
             this.sessionStore,
             userId,
-            config.session.timeoutMinutes
+            timeoutMinutes
         );
         if (result.isNew && result.expiredSessionId) {
             logger.info({
@@ -255,7 +258,8 @@ export class SessionManager {
         }
 
         // 3. Determine Role ID from Session Data
-        const currentRoleId = (existingSessionData?.role_id as string | undefined) || config.supabase.defaultRoleId;
+        const defaultRoleId = await runtimeConfig.getDefaultRoleId();
+        const currentRoleId = (existingSessionData?.role_id as string | undefined) || defaultRoleId;
         const character = await this._loadCharacter(currentRoleId);
 
         // 4. Build session object
@@ -559,7 +563,8 @@ export class SessionManager {
             return null;
         }
 
-        const roleId = session.character?.extensions?.role_id || config.supabase.defaultRoleId;
+        const defaultRoleId = await runtimeConfig.getDefaultRoleId();
+        const roleId = session.character?.extensions?.role_id || defaultRoleId;
         const characterTitle = session.character?.extensions?.title || session.character?.name || '未知角色';
         
         // 生成时间戳: YYYYMMDD_HHMMSS

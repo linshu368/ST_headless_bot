@@ -145,6 +145,21 @@ export class RuntimeConfigService {
         return this.get<number>('max_history_items', config.redis.maxHistoryItems);
     }
 
+    /** 获取历史截断低水位线 */
+    async getHistoryRetentionCount(): Promise<number> {
+        return this.get<number>('history_retention_count', config.redis.historyRetentionCount);
+    }
+
+    /** 获取会话过期时间（分钟） */
+    async getSessionTimeoutMinutes(): Promise<number> {
+        return this.get<number>('session_timeout_minutes', config.session.timeoutMinutes);
+    }
+
+    /** 获取默认角色 ID */
+    async getDefaultRoleId(): Promise<string> {
+        return this.get<string>('default_role_id', config.supabase.defaultRoleId);
+    }
+
     /** 获取增强系统指令 */
     async getSystemInstructions(): Promise<string> {
         return this.get<string>('system_instructions', config.telegram.instruction_enhancement.system_instructions);
@@ -153,6 +168,16 @@ export class RuntimeConfigService {
     /** 获取 Bot 启动欢迎语 */
     async getWelcomeMessage(): Promise<string> {
         return this.get<string>('welcome_message', config.telegram.welcome_message);
+    }
+
+    /** 获取流式生成分块间隔超时（ms） */
+    async getStreamInterChunkTimeout(): Promise<number> {
+        return this.get<number>('ai_stream_inter_chunk_timeout', config.timeouts.interChunk);
+    }
+
+    /** 获取流式生成总超时（ms） */
+    async getStreamTotalTimeout(): Promise<number> {
+        return this.get<number>('ai_stream_total_timeout', config.timeouts.total);
     }
 
     // =============================================

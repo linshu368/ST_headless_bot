@@ -74,23 +74,7 @@ const config: Config = {
         instruction_enhancement: {
             system_instructions: process.env.SYSTEM_INSTRUCTIONS || '请尽量简短回答。',
         },
-        welcome_message: process.env.WELCOME_MESSAGE || `让AI为你提供理想陪伴：
-• 💕 甜蜜的恋爱互动
-• 💌 深夜的暧昧幻想
-• 📝 令人社保的文爱体验
-• 💫 或任何你想要的剧情...
-
-✨ 独特体验：
-• 海量精品角色等你来选
-• 细腻的文字描写能力，对话自然动人
-
-
-🎮 开始体验:
-1. 直接发送消息即可以和角色对话
-2. 点击「选择角色」 查看角色图鉴，选择更多角色
-
-
-📚 点击下方按钮选择各种角色`,
+        welcome_message: process.env.WELCOME_MESSAGE || ``,
     },
     openai: {
         apiKey: process.env.OPENAI_API_KEY || '',
