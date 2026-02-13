@@ -13,8 +13,8 @@ export class UpstashSessionStore implements SessionStore {
     private readonly baseUrl: string;
     private readonly headers: Record<string, string>;
     private readonly namespace: string;
-    private readonly maxHistoryItems: number;
-    private readonly historyRetentionCount: number;
+    private maxHistoryItems: number;
+    private historyRetentionCount: number;
     private readonly debugEnabled: boolean;
 
     constructor(params: {
@@ -47,6 +47,17 @@ export class UpstashSessionStore implements SessionStore {
             message: 'UpstashSessionStore initialized',
             meta: { baseUrl: this.baseUrl, namespace: this.namespace },
         });
+    }
+
+    /**
+     * 动态更新历史消息上限（由 RuntimeConfigService 驱动）
+     */
+    setMaxHistoryItems(max: number): void {
+        this.maxHistoryItems = Math.max(1, max);
+        // historyRetentionCount 不超过 maxHistoryItems
+        if (this.historyRetentionCount > this.maxHistoryItems) {
+            this.historyRetentionCount = this.maxHistoryItems;
+        }
     }
 
     private logDebug(message: string, meta?: Record<string, unknown>): void {
@@ -352,30 +363,30 @@ export class UpstashSessionStore implements SessionStore {
         await this.cmd('set', key, data as unknown as string);
     }
 
-    async getUserModelMode(userId: string): Promise<'basic' | 'standard_a' | 'standard_b'> {
+    async getUserModelMode(userId: string): Promise<'tier_1' | 'tier_2' | 'tier_3' | 'tier_4'> {
         const key = this.keyUserModelMode(userId);
         try {
             const result = await this.cmd('get', key);
             const value = this.decodeGetResult(result);
-            if (value === 'basic' || value === 'standard_a' || value === 'standard_b') {
+            if (value === 'tier_1' || value === 'tier_2' || value === 'tier_3' || value === 'tier_4') {
                 return value;
             }
             if (value && typeof value === 'object') {
                 const obj = value as Record<string, unknown>;
                 const inner = obj.value ?? obj.result;
-                if (inner === 'basic' || inner === 'standard_a' || inner === 'standard_b') {
+                if (inner === 'tier_1' || inner === 'tier_2' || inner === 'tier_3' || inner === 'tier_4') {
                     return inner;
                 }
             }
-            return 'standard_b';
+            return 'tier_3';
         } catch {
-            return 'standard_b';
+            return 'tier_3';
         }
     }
 
     async setUserModelMode(
         userId: string,
-        mode: 'basic' | 'standard_a' | 'standard_b'
+        mode: 'tier_1' | 'tier_2' | 'tier_3' | 'tier_4'
     ): Promise<void> {
         const key = this.keyUserModelMode(userId);
         await this.cmd('set', key, mode);

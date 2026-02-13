@@ -5,43 +5,33 @@
 
 // 1. 定义产品等级 (Product Tiers) - 业务语言
 export enum ModelTier {
-    BASIC = 'basic',       // 基础模型
-    STANDARD_A = 'standard_a', // 中级模型A
-    STANDARD_B = 'standard_b', // 中级模型B
+    TIER_1 = 'tier_1', // 快餐模型
+    TIER_2 = 'tier_2', // 基础模型
+    TIER_3 = 'tier_3', // 旗舰模型
+    TIER_4 = 'tier_4', // 尊享模型
 }
 
 // 2. 配置映射表：Tier -> Channel ID
-// 这是核心业务决策配置
-// [Modified] 现在从 Config Source 动态读取，而不是硬编码
-import config from '../../../platform/config.js';
+// [Modified] 从 RuntimeConfigService 动态读取
+import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 
 /**
  * 规则：根据产品等级解析通道 ID
+ * 现在从 Supabase → Redis → 静态配置 三层获取映射关系
  */
-export function resolveChannelId(tier: ModelTier): string {
-    const mapping = config.ai_config_source.tier_mapping;
-    return mapping[tier] || 'channel_3'; // 默认兜底到 Premium/Channel_3
+export async function resolveChannelId(tier: ModelTier): Promise<string> {
+    const configSource = await runtimeConfig.getAIConfigSource();
+    return configSource.tier_mapping[tier] || 'channel_3'; // 默认兜底到 Channel_3
 }
 
 /**
- * 规则：将展示名称/工程语义映射到 Tier
+ * 规则：将用户模式值解析为 Tier
  */
-export function mapLegacyModeToTier(legacyMode: string): ModelTier {
-    // 归一化处理
-    const mode = legacyMode?.toLowerCase().trim();
-    
-    switch (mode) {
-        case 'basic':
-        case '基础模型':
-            return ModelTier.BASIC;
-        case 'standard_a':
-        case '中级模型a':
-            return ModelTier.STANDARD_A;
-        case 'standard_b':
-        case '中级模型b':
-            return ModelTier.STANDARD_B;
-        default:
-            // 未知模式默认为中级模型B
-            return ModelTier.STANDARD_B;
-    }
+export function resolveTierFromMode(mode: string): ModelTier {
+    const normalized = mode?.toLowerCase().trim();
+    if (normalized === ModelTier.TIER_1) return ModelTier.TIER_1;
+    if (normalized === ModelTier.TIER_2) return ModelTier.TIER_2;
+    if (normalized === ModelTier.TIER_3) return ModelTier.TIER_3;
+    if (normalized === ModelTier.TIER_4) return ModelTier.TIER_4;
+    return ModelTier.TIER_3; // 未知模式默认为旗舰模型
 }

@@ -14,13 +14,15 @@ export class UIHandler {
     }
 
     static createSettingsKeyboard(currentMode: string): TelegramBot.InlineKeyboardMarkup {
-        let modeText = "🎦 中级模型B (默认)";
-        if (currentMode === ModelTier.BASIC) {
-            modeText = "🍔 基础模型";
-        } else if (currentMode === ModelTier.STANDARD_A) {
-            modeText = "📖 中级模型A";
-        } else if (currentMode === ModelTier.STANDARD_B) {
-            modeText = "🎦 中级模型B";
+        let modeText = "🎦 旗舰模型 (默认)";
+        if (currentMode === ModelTier.TIER_1) {
+            modeText = "🍔 快餐模型";
+        } else if (currentMode === ModelTier.TIER_2) {
+            modeText = "📖 基础模型";
+        } else if (currentMode === ModelTier.TIER_3) {
+            modeText = "🎦 旗舰模型";
+        } else if (currentMode === ModelTier.TIER_4) {
+            modeText = "💎 尊享模型";
         }
 
         return {
@@ -32,25 +34,23 @@ export class UIHandler {
     }
 
     static getModelSelectionCaption(): string {
-        return `【 温馨提示 】
-🔹 模型表现
-中级模型 A 与 B 性能均十分强劲，仅在创作风格上有所侧重。您可以根据实际审美需求自由选取。
-⚠️ 特别说明
- 中级模型 B 在极少数情况下会受到 NSFW 机制限制，请知悉。
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-👉 您可以根据自身需要，选择适合您的模型。`;
+        return `
+━━━━━━━━━━━━
+`;
     }
 
     static createModelSelectionKeyboard(currentMode: string): TelegramBot.InlineKeyboardMarkup {
-        const isBasic = currentMode === ModelTier.BASIC;
-        const isStandardA = currentMode === ModelTier.STANDARD_A;
-        const isStandardB = currentMode === ModelTier.STANDARD_B || (!isBasic && !isStandardA);
+        const isTier1 = currentMode === ModelTier.TIER_1;
+        const isTier2 = currentMode === ModelTier.TIER_2;
+        const isTier3 = currentMode === ModelTier.TIER_3;
+        const isTier4 = currentMode === ModelTier.TIER_4;
 
         return {
             inline_keyboard: [
-                [{ text: `🎦 中级模型B${isStandardB ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD_B}` }],
-                [{ text: `🍔 基础模型${isBasic ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.BASIC}` }],
-                [{ text: `📖 中级模型A${isStandardA ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.STANDARD_A}` }],
+                [{ text: `🍔 快餐模型${isTier1 ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.TIER_1}` }],
+                [{ text: `📖 基础模型${isTier2 ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.TIER_2}` }],
+                [{ text: `🎦 旗舰模型${isTier3 ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.TIER_3}` }],
+                [{ text: `💎 尊享模型${isTier4 ? ' ✅' : ''}`, callback_data: `set_mode:${ModelTier.TIER_4}` }],
                 [{ text: "🔙 返回", callback_data: "settings_back_from_model" }]
             ]
         };

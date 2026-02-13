@@ -4,11 +4,11 @@ import {
     createInitialStreamScheduleState,
 } from '../rules/streamingSchedule.js';
 import { logger } from '../../../platform/logger.js';
-import config from '../../../platform/config.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
 import type { IMessageRepository } from '../ports/IMessageRepository.js';
-import { resolveChannelId, mapLegacyModeToTier } from '../domain/ModelStrategy.js';
+import { resolveChannelId, resolveTierFromMode } from '../domain/ModelStrategy.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
+import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -99,7 +99,7 @@ export class SimpleChat {
             // Calculate current round (approximate for non-streaming flow)
             // Note: In standard chat flow we assume it's a new turn
             const currentTurn = (session.turnCount || 0) + 1;
-            const enhancedInput = this._enhancePrompt(userInput, currentTurn);
+            const enhancedInput = await this._enhancePrompt(userInput, currentTurn);
             
             logger.debug({ 
                 kind: 'biz', 
@@ -336,9 +336,9 @@ export class SimpleChat {
         try {
             // Resolve User Preference -> Tier -> Channel
             const userMode = await this.sessionManager.getUserModelMode(userId);
-            const tier = mapLegacyModeToTier(userMode);
-            const channelId = resolveChannelId(tier);
-            const channel = this.channelRegistry.getChannel(channelId);
+            const tier = resolveTierFromMode(userMode);
+            const channelId = await resolveChannelId(tier);
+            const channel = await this.channelRegistry.getChannel(channelId);
 
             if (!channel) {
                 const error = new Error(`Channel configuration error: ${channelId} not found`);
@@ -360,7 +360,7 @@ export class SimpleChat {
             // So for the turn currently being generated: targetTurn = session.turnCount + 1.
             
             const targetTurn = (session.turnCount || 0) + 1;
-            enhancedInput = this._enhancePrompt(userInput, targetTurn);
+            enhancedInput = await this._enhancePrompt(userInput, targetTurn);
 
             logger.info({ 
                 kind: 'biz', 
@@ -480,10 +480,10 @@ export class SimpleChat {
 
     /**
      * 核心业务逻辑：指令增强 (Prompt Injection)
-     * [Modified] 统一使用 system_instructions，不再根据轮次区分
+     * [Modified] 从 RuntimeConfigService 动态读取 system_instructions
      */
-    private _enhancePrompt(userInput: string, turnCount: number): string {
-        const { system_instructions } = config.telegram.instruction_enhancement;
+    private async _enhancePrompt(userInput: string, turnCount: number): Promise<string> {
+        const system_instructions = await runtimeConfig.getSystemInstructions();
         // 无论轮次如何，统一使用最高优先级的系统指令
         return `##系统指令：以下为最高优先级指令。\n${system_instructions}\n##用户指令:${userInput}\n`;
     }

@@ -10,6 +10,7 @@ import { UpstashSessionStore } from '../../../infrastructure/redis/UpstashSessio
 import { SupabaseSnapshotRepository, type ChatSnapshot } from '../../../infrastructure/repositories/SupabaseSnapshotRepository.js';
 import { mapDbRowToCharacterV2, type RoleDataRow } from '../../../infrastructure/supabase/CharacterMapper.js';
 import { supabase } from '../../../infrastructure/supabase/SupabaseClient.js';
+import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 
 const COMPONENT = 'SessionManager';
 
@@ -53,6 +54,21 @@ export class SessionManager {
             logger.info({ kind: 'biz', component: COMPONENT, message: 'Redis store disabled' });
         }
         this.snapshotRepository = new SupabaseSnapshotRepository();
+    }
+
+    /**
+     * Helper: 从 RuntimeConfigService 刷新 UpstashSessionStore 的动态限制
+     * 内存缓存命中时开销为 0ms，每 60s 回源一次
+     */
+    private async refreshStoreLimits(): Promise<void> {
+        if (this.sessionStore && this.sessionStore instanceof UpstashSessionStore) {
+            try {
+                const maxItems = await runtimeConfig.getMaxHistoryItems();
+                this.sessionStore.setMaxHistoryItems(maxItems);
+            } catch {
+                // Non-critical: use existing value
+            }
+        }
     }
 
     /**
@@ -403,6 +419,9 @@ export class SessionManager {
             return;
         }
 
+        // 刷新动态历史上限（从 RuntimeConfig 获取，内存缓存命中时 0ms）
+        await this.refreshStoreLimits();
+
         try {
             for (const message of messages) {
                 await this.sessionStore.appendMessage(session.sessionId, message);
@@ -504,19 +523,19 @@ export class SessionManager {
     }
 
     async getUserModelMode(userId: string): Promise<string> {
-        if (!this.sessionStore) return 'standard_b';
+        if (!this.sessionStore) return 'tier_3';
         try {
             return await this.sessionStore.getUserModelMode(userId);
         } catch (error) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to get user model mode', error });
-            return 'standard_b';
+            return 'tier_3';
         }
     }
 
     async setUserModelMode(userId: string, mode: string): Promise<void> {
         if (!this.sessionStore) return;
         try {
-            await this.sessionStore.setUserModelMode(userId, mode as 'basic' | 'standard_a' | 'standard_b');
+            await this.sessionStore.setUserModelMode(userId, mode as 'tier_1' | 'tier_2' | 'tier_3' | 'tier_4');
         } catch (error) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to set user model mode', error });
         }

@@ -1,40 +1,29 @@
 import type { IChannelRegistry } from '../../features/chat/ports/IChannelRegistry.js';
 import type { IAIChannel } from '../../features/chat/ports/IAIChannel.js';
 import { PipelineChannel } from './channels/PipelineChannel.js';
-import type { AIProfileConfig } from '../../types/config.js';
-import config from '../../platform/config.js';
 import { logger } from '../../platform/logger.js';
+import { runtimeConfig } from '../runtime_config/RuntimeConfigService.js';
 
 export class ChannelRegistry implements IChannelRegistry {
-    private channels: Map<string, IAIChannel> = new Map();
 
-    constructor() {
-        this.initializeChannels();
-    }
-
-    private initializeChannels() {
+    /**
+     * 根据 channelId 动态创建通道实例
+     * 每次调用都从 RuntimeConfigService 获取最新配置（内存缓存命中时 0ms 开销）
+     */
+    async getChannel(channelId: string): Promise<IAIChannel | undefined> {
         try {
-            // 从 Config Source (将来是 Supabase) 加载配置
-            const channels = config.ai_config_source.channels;
+            const configSource = await runtimeConfig.getAIConfigSource();
+            const steps = configSource.channels[channelId];
 
-            // 动态组装 PipelineChannel
-            for (const [channelId, steps] of Object.entries(channels)) {
-                // 1. 验证数据完整性 (简单的运行时检查)
-                if (!Array.isArray(steps) || steps.length === 0) {
-                    logger.warn({ kind: 'infra', component: 'ChannelRegistry', message: `Skipping empty channel: ${channelId}` });
-                    continue;
-                }
-
-                // 2. 直接实例化 PipelineChannel
-                this.channels.set(channelId, new PipelineChannel(channelId, steps));
-                logger.info({ kind: 'infra', component: 'ChannelRegistry', message: `Registered channel: ${channelId} with ${steps.length} steps` });
+            if (!Array.isArray(steps) || steps.length === 0) {
+                logger.warn({ kind: 'infra', component: 'ChannelRegistry', message: `Channel not found or empty: ${channelId}` });
+                return undefined;
             }
-        } catch (error) {
-            logger.error({ kind: 'infra', component: 'ChannelRegistry', message: 'Failed to initialize channels', error });
-        }
-    }
 
-    getChannel(channelId: string): IAIChannel | undefined {
-        return this.channels.get(channelId);
+            return new PipelineChannel(channelId, steps);
+        } catch (error) {
+            logger.error({ kind: 'infra', component: 'ChannelRegistry', message: 'Failed to get channel', error });
+            return undefined;
+        }
     }
 }

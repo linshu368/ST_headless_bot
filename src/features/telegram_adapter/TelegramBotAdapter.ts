@@ -10,6 +10,7 @@ import { logger } from '../../platform/logger.js';
 import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
 import { UIHandler } from './UIHandler.js';
 import { SupabaseUserRepository } from '../../infrastructure/repositories/SupabaseUserRepository.js';
+import { runtimeConfig } from '../../infrastructure/runtime_config/RuntimeConfigService.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -320,8 +321,9 @@ export class TelegramBotAdapter {
                         await this._handleSnapshotPreview(chatId, snapshotId);
                     }
                 } else {
-                    // 1. 发送欢迎语 + 底部按钮
-                    await this.bot.sendMessage(chatId, config.telegram.welcome_message, {
+                    // 1. 发送欢迎语 + 底部按钮 (从 RuntimeConfig 动态获取)
+                    const welcomeMessage = await runtimeConfig.getWelcomeMessage();
+                    await this.bot.sendMessage(chatId, welcomeMessage, {
                         parse_mode: 'Markdown', // 确保 config 中的文案支持 Markdown
                         reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl)
                     });
@@ -498,10 +500,11 @@ export class TelegramBotAdapter {
     private async _handleSettings(chatId: string): Promise<void> {
         const currentMode = await this.sessionManager.getUserModelMode(chatId);
         
-        let modeText = "🎦 中级模型B (默认)";
-        if (currentMode === ModelTier.BASIC) modeText = "🍔 基础模型";
-        if (currentMode === ModelTier.STANDARD_A) modeText = "📖 中级模型A";
-        if (currentMode === ModelTier.STANDARD_B) modeText = "🎦 中级模型B";
+        let modeText = "🎦 旗舰模型 (默认)";
+        if (currentMode === ModelTier.TIER_1) modeText = "🍔 快餐模型";
+        if (currentMode === ModelTier.TIER_2) modeText = "📖 基础模型";
+        if (currentMode === ModelTier.TIER_3) modeText = "🎦 旗舰模型";
+        if (currentMode === ModelTier.TIER_4) modeText = "💎 尊享模型";
 
         const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
         
@@ -753,10 +756,11 @@ export class TelegramBotAdapter {
         if (!chatId) return;
 
         const currentMode = await this.sessionManager.getUserModelMode(chatId);
-        let modeText = "🎦 中级模型B (默认)";
-        if (currentMode === ModelTier.BASIC) modeText = "🍔 基础模型";
-        if (currentMode === ModelTier.STANDARD_A) modeText = "📖 中级模型A";
-        if (currentMode === ModelTier.STANDARD_B) modeText = "🎦 中级模型B";
+        let modeText = "🎦 旗舰模型 (默认)";
+        if (currentMode === ModelTier.TIER_1) modeText = "🍔 快餐模型";
+        if (currentMode === ModelTier.TIER_2) modeText = "📖 基础模型";
+        if (currentMode === ModelTier.TIER_3) modeText = "🎦 旗舰模型";
+        if (currentMode === ModelTier.TIER_4) modeText = "💎 尊享模型";
 
         const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
 
@@ -769,9 +773,10 @@ export class TelegramBotAdapter {
     }
 
     private _getModelDisplayName(mode: string): string {
-        if (mode === ModelTier.BASIC) return '基础模型';
-        if (mode === ModelTier.STANDARD_A) return '中级模型A';
-        if (mode === ModelTier.STANDARD_B) return '中级模型B';
-        return '中级模型B';
+        if (mode === ModelTier.TIER_1) return '快餐模型';
+        if (mode === ModelTier.TIER_2) return '基础模型';
+        if (mode === ModelTier.TIER_3) return '旗舰模型';
+        if (mode === ModelTier.TIER_4) return '尊享模型';
+        return '旗舰模型';
     }
 }

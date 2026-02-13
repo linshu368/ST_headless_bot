@@ -126,9 +126,11 @@ const config: Config = {
     session: {
         timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || '30'),
     },
-    // --- Step 1: 模拟外部配置数据源 (将来替换为 Supabase) ---
+    // --- 运行时配置 (已迁移至 Supabase runtime_config 表) ---
+    // 以下为静态 fallback 默认值，仅在 Supabase + Redis 均不可用时启用
+    // 正常运行时由 RuntimeConfigService 从 Supabase → Redis → 此处 三层获取
     ai_config_source: {
-        // 1. 通道配置表 (模拟 Supabase 'ai_channels' 表)
+        // 1. 通道配置表 (Fallback: 正式数据在 Supabase runtime_config.ai_config_source)
         channels: {
             'channel_1': [
                 {
@@ -218,11 +220,12 @@ const config: Config = {
                 }
             ]
         },
-        // 2. 映射表 (模拟 Supabase 'tier_mapping' 表)
+        // 2. 映射表 (Fallback: 正式数据在 Supabase runtime_config.ai_config_source.tier_mapping)
         tier_mapping: {
-            'basic': 'channel_1',
-            'standard_a': 'channel_2',
-            'standard_b': 'channel_3',
+            'tier_1': 'channel_1',
+            'tier_2': 'channel_2',
+            'tier_3': 'channel_3',
+            'tier_4': 'channel_3'
         },
     }
 };

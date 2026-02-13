@@ -16,8 +16,8 @@ export interface SessionStore {
     getSessionData(sessionId: string): Promise<Record<string, unknown> | null>;
     setSessionData(sessionId: string, data: Record<string, unknown>): Promise<void>;
 
-    getUserModelMode(userId: string): Promise<'basic' | 'standard_a' | 'standard_b'>;
-    setUserModelMode(userId: string, mode: 'basic' | 'standard_a' | 'standard_b'): Promise<void>;
+    getUserModelMode(userId: string): Promise<'tier_1' | 'tier_2' | 'tier_3' | 'tier_4'>;
+    setUserModelMode(userId: string, mode: 'tier_1' | 'tier_2' | 'tier_3' | 'tier_4'): Promise<void>;
 
     /** User-level last active timestamp (ms) for session expiry */
     getLastActiveTime(userId: string): Promise<number | null>;
