@@ -6,12 +6,16 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { collectSrcCode } from './srcCollector.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Prompt 目录路径
 const PROMPT_DIR = process.env.PROMPT_DIR || path.join(__dirname, 'prompt');
+
+// 项目根路径
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
 
 /**
  * 读取 prompt 模板文件
@@ -44,14 +48,8 @@ export function loadProjectContext() {
     };
 
     return {
-        // 长期不变的上下文
         arch: loadFile('long/arch.txt'),
         principle: loadFile('long/principle.txt'),
-        businessGoal: loadFile('long/project_business_goal.txt'),
-        
-        // 阶段性上下文
-        functionalSpec: loadFile('mid/requirements_functional_spec.txt'),
-        currentMission: loadFile('mid/workstream/current_mission.txt'),
     };
 }
 
@@ -72,13 +70,6 @@ export const PromptTemplates = {
     get pushLogTitle(): string {
         return readPromptTemplate('push_log_title.prompt');
     },
-
-    /**
-     * 面向产品的 Push 总结模板
-     */
-    get pushLogArch2Pr(): string {
-        return readPromptTemplate('push_log_arch2pr.prompt');
-    }
 };
 
 /**
@@ -86,12 +77,13 @@ export const PromptTemplates = {
  */
 export function renderCommitPrompt(diffContent: string): string {
     const context = loadProjectContext();
+    const srcCode = collectSrcCode(PROJECT_ROOT);
     const template = PromptTemplates.commitProcessDiff;
     
     return template
         .replace('{project_arch}', context.arch)
         .replace('{project_principle}', context.principle)
-        .replace('{workstream_current_mission}', context.currentMission)
+        .replace('{src_code}', srcCode)
         .replace('{git_push_commit_logs}', diffContent);
 }
 
@@ -100,27 +92,13 @@ export function renderCommitPrompt(diffContent: string): string {
  */
 export function renderPushLogPrompt(diffContent: string): string {
     const context = loadProjectContext();
+    const srcCode = collectSrcCode(PROJECT_ROOT);
     const template = PromptTemplates.commitProcessDiff;
     
     return template
         .replace('{project_arch}', context.arch)
         .replace('{project_principle}', context.principle)
-        .replace('{workstream_current_mission}', context.currentMission)
-        .replace('{git_push_commit_logs}', diffContent);
-}
-
-/**
- * 渲染面向产品的 push 日志 prompt
- */
-export function renderArch2PrPrompt(diffContent: string): string {
-    const context = loadProjectContext();
-    const template = PromptTemplates.pushLogArch2Pr;
-    
-    return template
-        .replace('{product_business_goal}', context.businessGoal)
-        .replace('{requirements_functional_spec}', context.functionalSpec)
-        .replace('{project_architecture}', context.arch)
-        .replace('{project_principle}', context.principle)
+        .replace('{src_code}', srcCode)
         .replace('{git_push_commit_logs}', diffContent);
 }
 

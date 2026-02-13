@@ -1,7 +1,7 @@
 #!/usr/bin/env npx ts-node
 /**
  * AI 生成 Push 日志
- * 基于 push 的 diff 内容，生成面向工程和产品的双重总结
+ * 基于 push 的 diff 内容，生成工程视角总结
  */
 
 import fs from 'fs';
@@ -12,7 +12,6 @@ import { fileURLToPath } from 'url';
 import { GptCaller } from '../../gpt/gptCaller.js';
 import { 
     renderPushLogPrompt, 
-    renderArch2PrPrompt, 
     renderPushLogTitlePrompt 
 } from '../../gpt/promptLoader.js';
 
@@ -29,7 +28,6 @@ interface PushLog {
     date: string;
     commits: string[];
     message: string;           // 工程侧总结
-    message_for_product: string;  // 产品侧总结
     dir_name: string;
 }
 
@@ -126,19 +124,7 @@ async function main() {
         console.error(`工程视角总结生成失败: ${error.message}`);
     }
 
-    // 2. 生成产品视角总结
-    console.error('正在生成产品视角总结...');
-    let messageForProduct: string;
-    try {
-        const prompt = renderArch2PrPrompt(diffContent);
-        messageForProduct = await gpt.getResponse(prompt);
-        console.error('产品视角总结生成成功!');
-    } catch (error: any) {
-        messageForProduct = '未生成产品说明';
-        console.error(`产品视角总结生成失败: ${error.message}`);
-    }
-
-    // 3. 生成目录名
+    // 2. 生成目录名
     console.error('正在生成目录名...');
     let dirName: string;
     try {
@@ -161,7 +147,6 @@ async function main() {
         date: now.toISOString(),
         commits,
         message,
-        message_for_product: messageForProduct,
         dir_name: dirName
     };
 
