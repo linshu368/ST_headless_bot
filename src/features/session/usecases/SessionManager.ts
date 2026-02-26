@@ -4,6 +4,7 @@ import config from '../../../platform/config.js';
 import { STEngineAdapter } from '../../../infrastructure/st_matrix/STEngineAdapter.js';
 import { createFetchInterceptor } from '../../../infrastructure/networking/FetchInterceptor.js';
 import { logger } from '../../../platform/logger.js';
+import type { RequestTimer } from '../../../platform/RequestTimer.js';
 import type { SessionMessage, SessionStore } from '../../../core/ports/SessionStore.js';
 import { resolveSessionId as resolveSessionIdPure } from './sessionResolution.js';
 import { UpstashSessionStore } from '../../../infrastructure/redis/UpstashSessionStore.js';
@@ -211,11 +212,12 @@ export class SessionManager {
     /**
      * Get session data from Redis and reconstruct the session object
      */
-    async getOrCreateSession(userId: string): Promise<ChatSession> {
+    async getOrCreateSession(userId: string, timer?: RequestTimer): Promise<ChatSession> {
         logger.debug({ kind: 'biz', component: COMPONENT, message: 'Resolving session from store' });
 
         // 1. Resolve session ID (handles expiry + touch)
         const { sessionId, isNew, expiredSessionId } = await this._resolveSessionId(userId);
+        timer?.mark('sid_resolved');
 
         // 2. Load existing data, or carry over role preference from expired session
         let existingHistory: OpenAIMessage[] = [];
@@ -256,14 +258,17 @@ export class SessionManager {
                 });
             }
         }
+        timer?.mark('history_loaded');
 
         // 3. Determine Role ID from Session Data
         const defaultRoleId = await runtimeConfig.getDefaultRoleId();
         const currentRoleId = (existingSessionData?.role_id as string | undefined) || defaultRoleId;
         const character = await this._loadCharacter(currentRoleId);
+        timer?.mark('char_loaded');
 
         // 4. Build session object
         const session = await this._createSession(userId, character, sessionId, existingHistory, existingSessionData);
+        timer?.mark('session_built');
         return session;
     }
 

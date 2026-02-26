@@ -7,6 +7,7 @@ import { SessionManager } from '../session/usecases/SessionManager.js';
 import { ModelTier } from '../chat/domain/ModelStrategy.js';
 import config from '../../platform/config.js';
 import { logger } from '../../platform/logger.js';
+import { RequestTimer } from '../../platform/RequestTimer.js';
 import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
 import { UIHandler } from './UIHandler.js';
 import { SupabaseUserRepository } from '../../infrastructure/repositories/SupabaseUserRepository.js';
@@ -222,41 +223,35 @@ export class TelegramBotAdapter {
             // 5. 普通对话处理（加锁）
             this.activeChats.set(chatId, Date.now());
             const startTime = Date.now();
+            const timer = new RequestTimer();
             try {
                 // 发送 "typing" 状态，提升用户体验
                 this.bot.sendChatAction(msg.chat.id, 'typing');
 
                 const placeholder = await this.bot.sendMessage(msg.chat.id, '✍️输入中...');
+                timer.mark('placeholder_sent');
                 let lastText = '';
+                let isFirstEdit = true;
 
-                for await (const update of this.simpleChat.streamChat(chatId, text)) {
-                    // Debug: Log raw update from LLM to investigate empty text issues
-                    logger.info({
-                        kind: 'biz',
-                        component: COMPONENT,
-                        message: 'Raw stream update received',
-                        meta: { 
-                            rawText: update.text, 
-                            textLength: update.text?.length,
-                            isFirst: update.isFirst
-                        }
-                    });
-
+                for await (const update of this.simpleChat.streamChat(chatId, text, timer)) {
                     if (!update.text || update.text.trim().length === 0 || update.text === lastText) continue;
-
-                    if (update.isFirst && update.firstResponseMs !== undefined) {
-                        logger.info({ 
-                            kind: 'biz', 
-                            component: COMPONENT, 
-                            message: 'First response received', 
-                            meta: { firstResponseMs: update.firstResponseMs } 
-                        });
-                    }
 
                     await this.bot.editMessageText(update.text, {
                         chat_id: msg.chat.id,
                         message_id: placeholder.message_id
                     });
+
+                    if (isFirstEdit) {
+                        timer.mark('first_edit_done');
+                        logger.debug({
+                            kind: 'biz',
+                            component: COMPONENT,
+                            message: 'First response waterfall',
+                            meta: { waterfall: timer.toWaterfall(), chatId }
+                        });
+                        isFirstEdit = false;
+                    }
+
                     lastText = update.text;
                 }
 

@@ -4,6 +4,7 @@ import {
     createInitialStreamScheduleState,
 } from '../rules/streamingSchedule.js';
 import { logger } from '../../../platform/logger.js';
+import type { RequestTimer } from '../../../platform/RequestTimer.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
 import type { IMessageRepository } from '../ports/IMessageRepository.js';
 import { resolveChannelId, resolveTierFromMode } from '../domain/ModelStrategy.js';
@@ -164,7 +165,7 @@ export class SimpleChat {
      * @param userInput 用户输入的文本
      * @returns 流式增量文本
      */
-    async *streamChat(userId: string, userInput: string): AsyncGenerator<{
+    async *streamChat(userId: string, userInput: string, timer?: RequestTimer): AsyncGenerator<{
         text: string;
         isFirst: boolean;
         isFinal: boolean;
@@ -173,11 +174,11 @@ export class SimpleChat {
         const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Streaming chat started' });
 
-        const session = await this.sessionManager.getOrCreateSession(userId);
+        const session = await this.sessionManager.getOrCreateSession(userId, timer);
 
         // 使用通用生成器
         let accumulatedText = '';
-        for await (const update of this._executeStreamGeneration(session, userInput, userId, 'normal', processingStartTime)) {
+        for await (const update of this._executeStreamGeneration(session, userInput, userId, 'normal', processingStartTime, timer)) {
             if (update.isFinal) {
                 accumulatedText = update.text;
             }
@@ -256,7 +257,8 @@ export class SimpleChat {
         userInput: string, 
         userId: string, 
         messageType: 'normal' | 'regenerate',
-        processingStartTime: number
+        processingStartTime: number,
+        timer?: RequestTimer
     ): AsyncGenerator<{
         text: string;
         isFirst: boolean;
@@ -325,6 +327,7 @@ export class SimpleChat {
             characters: [session.character],
             chat: engineContext
         });
+        timer?.mark('context_loaded');
 
         const startedAtMs = Date.now();
         let firstResponseMs: number | undefined;
@@ -362,6 +365,7 @@ export class SimpleChat {
             const targetTurn = (session.turnCount || 0) + 1;
             enhancedInput = await this._enhancePrompt(userInput, targetTurn);
 
+            timer?.mark('channel_resolved');
             logger.info({ 
                 kind: 'biz', 
                 component: COMPONENT, 
@@ -375,6 +379,7 @@ export class SimpleChat {
                 engine: session.engine, 
                 userInput: enhancedInput,
                 trace: executionTrace, // Pass trace object
+                timer,
                 // [FIX] Pass context data for engine state reset between Pipeline retries.
                 // When a pipeline step fails (e.g. TTFT timeout), the engine's win.chat is polluted
                 // with messages from the failed attempt. PipelineChannel needs this data to reload
@@ -397,6 +402,7 @@ export class SimpleChat {
                     if (decision?.shouldUpdate && accumulatedText !== lastSentText) {
                         if (decision.isFirstUpdate && firstResponseMs === undefined) {
                             firstResponseMs = nowMs - processingStartTime;
+                            timer?.mark('first_yield');
                         }
 
                         lastSentText = accumulatedText;

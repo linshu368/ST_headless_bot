@@ -122,6 +122,7 @@ export class PipelineChannel implements IAIChannel {
     async *streamGenerate(messages: any[], context: any): AsyncGenerator<string> {
         const engine = context.engine as ISTEngine;
         const userInput = context.userInput as string;
+        const timer = context.timer;
 
         if (!engine || !userInput) {
             throw new Error('PipelineChannel requires engine and userInput in context');
@@ -186,6 +187,9 @@ export class PipelineChannel implements IAIChannel {
 
                 let hasYielded = false;
                 for await (const chunk of managed) {
+                    if (!hasYielded) {
+                        timer?.mark('first_token');
+                    }
                     hasYielded = true;
                     yield chunk;
                 }
