@@ -554,9 +554,7 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null, tr
         sink?.onError(err);
         throw err;
     }
-};
-
-const buildChatCompletionResponse = (content: string, model?: string) => ({
+};const buildChatCompletionResponse = (content: string, model?: string) => ({
     id: `chatcmpl-${Date.now()}`,
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
