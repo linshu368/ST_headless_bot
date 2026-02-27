@@ -234,16 +234,21 @@ export class SessionManager {
                 return null;
             });
         } else if (isNew && expiredSessionId && this.sessionStore) {
-            historyPromise = Promise.resolve([]);
+            // Inherit full history from expired session — session_id is an internal metric,
+            // user experience should feel like "picking up where I left off"
+            historyPromise = this.sessionStore.getMessages(expiredSessionId).catch(error => {
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to inherit history from expired session', error });
+                return [] as OpenAIMessage[];
+            });
             sessionDataPromise = this.sessionStore.getSessionData(expiredSessionId).then(prevData => {
-                if (prevData?.role_id) {
-                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Role preference carried over from expired session', meta: { expiredSessionId, roleId: prevData.role_id } });
-                    return { role_id: prevData.role_id } as Record<string, unknown>;
+                if (prevData) {
+                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Session context carried over from expired session', meta: { expiredSessionId, roleId: prevData.role_id } });
+                    return { ...prevData, turn_count: 0 } as Record<string, unknown>;
                 }
-                return null;
+                return { turn_count: 0 } as Record<string, unknown>;
             }).catch(error => {
-                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to carry over role preference', error });
-                return null;
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to carry over session data', error });
+                return { turn_count: 0 } as Record<string, unknown>;
             });
         } else {
             historyPromise = Promise.resolve([]);
@@ -265,6 +270,14 @@ export class SessionManager {
         // 4. Build session object
         const session = await this._createSession(userId, character, sessionId, existingHistory, existingSessionData);
         timer?.mark('session_built');
+
+        // Persist inherited history to new session's Redis key so it survives restarts
+        if (isNew && expiredSessionId && this.sessionStore && existingHistory.length > 0) {
+            this.sessionStore.setMessages(sessionId, existingHistory).catch(error => {
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to persist inherited history to new session', error, meta: { sessionId } });
+            });
+        }
+
         return session;
     }
 
@@ -622,10 +635,8 @@ export class SessionManager {
                 await this.sessionStore.setMessages(sessionId, snapshot.history || []);
 
                 // Update session metadata (reset turn_count to match snapshot history)
-                const restoredTurnCount = Math.floor((snapshot.history?.length || 0) / 2);
                 await this._updateSessionData(sessionId, {
                     role_id: snapshot.role_id,
-                    turn_count: restoredTurnCount,
                     post_link: character.extensions?.post_link,
                     avatar: character.extensions?.avatar,
                 });
