@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
+import { ProxyAgent } from 'proxy-agent';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +26,7 @@ export class GptCaller {
     private apiUrl: string;
     private model: string;
     private timeout: number;
+    private agent?: any;
 
     constructor(options: GptCallerOptions = {}) {
         this.apiKey = process.env.OPENAI_API_KEY || '';
@@ -32,6 +34,7 @@ export class GptCaller {
         // 运维工具使用配置的模型，优先级: OPS_GPT_MODEL > OPENAI_MODEL > 默认值
         this.model = options.model || process.env.OPENAI_MODEL || 'google/gemini-3-flash-preview';
         this.timeout = options.timeout || 60000;
+        this.agent = createProxyAgentFromTelegramEnv();
 
         if (!this.apiKey) {
             throw new Error('OPENAI_API_KEY 未找到！请检查 .env 文件');
@@ -64,7 +67,8 @@ export class GptCaller {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(data),
-                signal: controller.signal
+                signal: controller.signal,
+                ...(this.agent ? { agent: this.agent } : {})
             });
 
             clearTimeout(timeoutId);
@@ -110,3 +114,18 @@ export class GptCaller {
 
 // 默认导出一个工厂函数
 export const createGptCaller = (options?: GptCallerOptions) => new GptCaller(options);
+
+function createProxyAgentFromTelegramEnv(): any | undefined {
+    const schemeRaw = (process.env.TELEGRAM_PROXY_SCHEME || '').trim();
+    const host = (process.env.TELEGRAM_PROXY_HOST || '').trim();
+    const port = (process.env.TELEGRAM_PROXY_PORT || '').trim();
+
+    if (!schemeRaw || !host || !port) return undefined;
+
+    // socks5h 让 DNS 也走代理，避免“解析走本地”带来的不一致
+    const scheme = schemeRaw.toLowerCase() === 'socks5' ? 'socks5h' : schemeRaw.toLowerCase();
+    const proxyUrl = `${scheme}://${host}:${port}`;
+    return new ProxyAgent({
+        getProxyForUrl: () => proxyUrl,
+    });
+}
