@@ -40,6 +40,7 @@ export class STEngineAdapter implements ISTEngine {
     private connectAttemptInProgress = false;
     private hasConnected = false;
     private lastSyncedMainApi: string | null = null;
+    private _aborted = false;
 
     constructor(userConfig: UserConfig, networkHandler: ISTNetworkHandler) {
         this.userConfig = userConfig; // Reference to Layer 2 Config
@@ -67,6 +68,13 @@ export class STEngineAdapter implements ISTEngine {
         // We need to explicitly update it.
         if (this.networkHandler.setConfig) {
             this.networkHandler.setConfig(config);
+        }
+    }
+
+    abort(): void {
+        this._aborted = true;
+        if (this.networkHandler.abort) {
+            this.networkHandler.abort();
         }
     }
 
@@ -608,11 +616,8 @@ export class STEngineAdapter implements ISTEngine {
         const cleanup = async () => {
             this.networkHandler.setStreamMode?.(false);
             this.networkHandler.setStreamSink?.(null);
-            try {
-                await generationPromise;
-            } catch {
-                // generation errors are surfaced via stream iterator
-            }
+            this.abort();
+            generationPromise.catch(() => {});
         };
 
         const iterator = {
@@ -634,6 +639,7 @@ export class STEngineAdapter implements ISTEngine {
 
     private async _runGeneration(prompt: string, trace?: any): Promise<any> {
         if (!this.instance) throw new Error('STEngine not initialized');
+        this._aborted = false;
         
         // [Trace] Ensure trace context is set (redundant for stream but necessary for regular generate)
         if (trace && this.networkHandler.setTraceContext) {
@@ -706,9 +712,12 @@ export class STEngineAdapter implements ISTEngine {
             if (e.message && e.message.includes("reading 'prompt'")) {
                 logger.warn({ kind: 'sys', component: COMPONENT, message: 'Suppressing expected ST error', meta: { error: e.message } });
             } else {
-                // Generation failed → restore chat snapshot to prevent state pollution
-                this._restoreChat(win, chatSnapshot);
-                logger.error({ kind: 'sys', component: COMPONENT, message: 'Generate failed, chat restored', error: e });
+                if (!this._aborted) {
+                    this._restoreChat(win, chatSnapshot);
+                    logger.error({ kind: 'sys', component: COMPONENT, message: 'Generate failed, chat restored', error: e });
+                } else {
+                    logger.info({ kind: 'sys', component: COMPONENT, message: 'Generate failed after abort, skipping chat restore' });
+                }
                 throw e;
             }
         }

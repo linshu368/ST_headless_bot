@@ -26,6 +26,7 @@ export interface FetchInterceptor extends Function {
     setStreamSink?: (sink: StreamSink | null) => void;
     setConfig?: (config: FetchInterceptorConfig) => void;
     setTraceContext?: (trace: any) => void;
+    abort?: () => void;
 }
 
 export interface StreamSink {
@@ -54,6 +55,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     let streamSink: StreamSink | null = null;
     let currentConfig: FetchInterceptorConfig = { ...config };
     let traceContext: any = null;
+    let currentAbortController: AbortController | null = null;
 
     const interceptor = (async (url: string | URL | Request, options: any = {}): Promise<Response | any> => {
         const urlStr = url.toString();
@@ -328,11 +330,13 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 
                 // Real Request to LLM
                 // Note: We use the real 'fetch' here, not the intercepted one (recursion avoidance)
+                currentAbortController = new AbortController();
                 const response = await fetch(targetUrl, {
                     method: 'POST',
                     headers: headers,
                     body: bodyStr,
-                    agent: new ProxyAgent()
+                    agent: new ProxyAgent(),
+                    signal: currentAbortController.signal as any
                 });
 
                 if (!response.ok) {
@@ -370,6 +374,19 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 return response;
     
             } catch (err: any) {
+                if (err.name === 'AbortError') {
+                    logger.info({ kind: 'sys', component: COMPONENT, message: 'LLM request aborted (pipeline retry)' });
+                    if (streamSink) {
+                        streamSink.onError(new Error('Request aborted'));
+                    }
+                    return {
+                        ok: false,
+                        status: 499,
+                        statusText: 'Aborted',
+                        text: async () => 'Request aborted',
+                        json: async () => ({ error: 'Request aborted' })
+                    };
+                }
                 // 关键：完整暴露原始错误
                 logger.error({ 
                     kind: 'sys', 
@@ -476,6 +493,13 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
 
     interceptor.setTraceContext = (trace: any) => {
         traceContext = trace;
+    };
+
+    interceptor.abort = () => {
+        if (currentAbortController) {
+            currentAbortController.abort();
+            currentAbortController = null;
+        }
     };
 
     return interceptor;

@@ -51,4 +51,5 @@ export interface ISTNetworkHandler {
     setStreamSink?(sink: any | null): void;
     setConfig?(config: any): void;
     setTraceContext?(trace: any): void;
+    abort?(): void;
 }
