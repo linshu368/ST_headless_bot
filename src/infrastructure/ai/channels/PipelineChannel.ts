@@ -128,10 +128,10 @@ export class PipelineChannel implements IAIChannel {
             throw new Error('PipelineChannel requires engine and userInput in context');
         }
 
-        const [interChunkDefaultMs, totalDefaultMs] = await Promise.all([
-            runtimeConfig.getStreamInterChunkTimeout(),
-            runtimeConfig.getStreamTotalTimeout(),
-        ]);
+        // Use pre-fetched timeouts if available (avoids 2 extra Redis calls)
+        const preloaded = context.timeoutConfig;
+        const interChunkDefaultMs = preloaded?.interChunkMs ?? await runtimeConfig.getStreamInterChunkTimeout();
+        const totalDefaultMs = preloaded?.totalMs ?? await runtimeConfig.getStreamTotalTimeout();
 
         // 顺序执行 Pipeline 中的 Profile
         for (let i = 0; i < this.steps.length; i++) {

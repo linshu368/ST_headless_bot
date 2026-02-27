@@ -219,49 +219,45 @@ export class SessionManager {
         const { sessionId, isNew, expiredSessionId } = await this._resolveSessionId(userId);
         timer?.mark('sid_resolved');
 
-        // 2. Load existing data, or carry over role preference from expired session
-        let existingHistory: OpenAIMessage[] = [];
-        let existingSessionData: Record<string, unknown> | null = null;
+        // 2. Parallel fetch: session data + default role ID
+        // (was 4 sequential Redis/Supabase calls → 1 parallel round)
+        let historyPromise: Promise<OpenAIMessage[]>;
+        let sessionDataPromise: Promise<Record<string, unknown> | null>;
 
         if (!isNew && this.sessionStore) {
-            // Active session → load full state
-            try {
-                existingHistory = await this.sessionStore.getMessages(sessionId);
-                existingSessionData = await this.sessionStore.getSessionData(sessionId);
-            } catch (error) {
-                logger.warn({
-                    kind: 'biz',
-                    component: COMPONENT,
-                    message: 'Failed to load session from store',
-                    error,
-                });
-            }
+            historyPromise = this.sessionStore.getMessages(sessionId).catch(error => {
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to load messages', error });
+                return [] as OpenAIMessage[];
+            });
+            sessionDataPromise = this.sessionStore.getSessionData(sessionId).catch(error => {
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to load session data', error });
+                return null;
+            });
         } else if (isNew && expiredSessionId && this.sessionStore) {
-            // Session expired → fresh history, but preserve role preference for continuity
-            try {
-                const prevData = await this.sessionStore.getSessionData(expiredSessionId);
+            historyPromise = Promise.resolve([]);
+            sessionDataPromise = this.sessionStore.getSessionData(expiredSessionId).then(prevData => {
                 if (prevData?.role_id) {
-                    existingSessionData = { role_id: prevData.role_id };
-                    logger.info({
-                        kind: 'biz',
-                        component: COMPONENT,
-                        message: 'Role preference carried over from expired session',
-                        meta: { expiredSessionId, roleId: prevData.role_id }
-                    });
+                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Role preference carried over from expired session', meta: { expiredSessionId, roleId: prevData.role_id } });
+                    return { role_id: prevData.role_id } as Record<string, unknown>;
                 }
-            } catch (error) {
-                logger.warn({
-                    kind: 'biz',
-                    component: COMPONENT,
-                    message: 'Failed to carry over role preference from expired session',
-                    error,
-                });
-            }
+                return null;
+            }).catch(error => {
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to carry over role preference', error });
+                return null;
+            });
+        } else {
+            historyPromise = Promise.resolve([]);
+            sessionDataPromise = Promise.resolve(null);
         }
+
+        const [existingHistory, existingSessionData, defaultRoleId] = await Promise.all([
+            historyPromise,
+            sessionDataPromise,
+            runtimeConfig.getDefaultRoleId(),
+        ]);
         timer?.mark('history_loaded');
 
         // 3. Determine Role ID from Session Data
-        const defaultRoleId = await runtimeConfig.getDefaultRoleId();
         const currentRoleId = (existingSessionData?.role_id as string | undefined) || defaultRoleId;
         const character = await this._loadCharacter(currentRoleId);
         timer?.mark('char_loaded');
@@ -356,13 +352,17 @@ export class SessionManager {
         // NOTE: We do NOT inject first_mes into history here anymore.
         // It should be constructed dynamically during prompt assembly to keep Redis clean.
 
-        // Persist session metadata (session ID pointers already managed by _resolveSessionId)
+        // Persist session metadata (fire-and-forget: not on critical path)
         if (this.sessionStore) {
-            await this._updateSessionData(sessionId, {
+            const mergedData = {
+                ...(existingSessionData || {}),
                 session_id: sessionId,
                 user_id: userId,
                 role_id: character.extensions?.role_id,
                 turn_count: turnCount,
+            };
+            this.sessionStore.setSessionData(sessionId, mergedData).catch(error => {
+                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to persist session metadata (non-fatal)', error, meta: { sessionId } });
             });
         }
 

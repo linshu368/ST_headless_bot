@@ -7,9 +7,10 @@ import { logger } from '../../../platform/logger.js';
 import type { RequestTimer } from '../../../platform/RequestTimer.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
 import type { IMessageRepository } from '../ports/IMessageRepository.js';
-import { resolveChannelId, resolveTierFromMode } from '../domain/ModelStrategy.js';
+import { resolveTierFromMode } from '../domain/ModelStrategy.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
+import { PipelineChannel } from '../../../infrastructure/ai/channels/PipelineChannel.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -323,10 +324,19 @@ export class SimpleChat {
             }
         }
 
-        await session.engine.loadContext({
-            characters: [session.character],
-            chat: engineContext
-        });
+        // Parallel: loadContext + all config lookups
+        // (was 6+ sequential Redis calls → 1 parallel round)
+        const [, userMode, aiConfigSource, systemInstructions, interChunkMs, totalMs] = await Promise.all([
+            session.engine.loadContext({
+                characters: [session.character],
+                chat: engineContext
+            }),
+            this.sessionManager.getUserModelMode(userId),
+            runtimeConfig.getAIConfigSource(),
+            runtimeConfig.getSystemInstructions(),
+            runtimeConfig.getStreamInterChunkTimeout(),
+            runtimeConfig.getStreamTotalTimeout(),
+        ]);
         timer?.mark('context_loaded');
 
         const startedAtMs = Date.now();
@@ -337,33 +347,21 @@ export class SimpleChat {
         let enhancedInput = '';
 
         try {
-            // Resolve User Preference -> Tier -> Channel
-            const userMode = await this.sessionManager.getUserModelMode(userId);
+            // Resolve channel synchronously from pre-fetched config
             const tier = resolveTierFromMode(userMode);
-            const channelId = await resolveChannelId(tier);
-            const channel = await this.channelRegistry.getChannel(channelId);
+            const channelId = aiConfigSource.tier_mapping[tier] || 'channel_3';
+            const steps = aiConfigSource.channels[channelId];
 
-            if (!channel) {
+            if (!Array.isArray(steps) || steps.length === 0) {
                 const error = new Error(`Channel configuration error: ${channelId} not found`);
                 logger.error({ kind: 'biz', component: COMPONENT, message: 'Channel resolution failed', error, meta: { userMode, tier, channelId } });
                 throw error;
             }
 
-            // Apply Prompt Injection
-            // Note: For new messages, it's next turn. For regeneration, it's current turn.
-            // But _executeStreamGeneration is generic.
-            // We need to know if this is a "new" turn or "existing" turn (regenerate).
-            // HACK: We can infer this. If userInput matches last user message in history, it's likely a regenerate-like scenario or retry.
-            // But simpler: just trust session.turnCount. 
-            // If it's a new message (streamChat), session.turnCount hasn't incremented yet (it increments in appendMessages).
-            // So for new message: effectiveTurn = session.turnCount + 1
-            // For regenerate: we rolled back, so session.turnCount is still "high"? No, turnCount is persistent counter.
-            // Wait, if we regenerate turn 5, we want to use turn 5 logic.
-            // session.turnCount stores the COMPLETED turns.
-            // So for the turn currently being generated: targetTurn = session.turnCount + 1.
-            
+            const channel = new PipelineChannel(channelId, steps);
+
             const targetTurn = (session.turnCount || 0) + 1;
-            enhancedInput = await this._enhancePrompt(userInput, targetTurn);
+            enhancedInput = this._buildEnhancedPrompt(userInput, systemInstructions);
 
             timer?.mark('channel_resolved');
             logger.info({ 
@@ -373,21 +371,17 @@ export class SimpleChat {
                 meta: { tier, channelId, targetTurn } 
             });
 
-            // Delegate to Channel
-            // [Modified] Use contextToLoad (session.history)
+            // Delegate to Channel (pass pre-fetched timeouts)
             const stream = channel.streamGenerate(contextToLoad, { 
                 engine: session.engine, 
                 userInput: enhancedInput,
-                trace: executionTrace, // Pass trace object
+                trace: executionTrace,
                 timer,
-                // [FIX] Pass context data for engine state reset between Pipeline retries.
-                // When a pipeline step fails (e.g. TTFT timeout), the engine's win.chat is polluted
-                // with messages from the failed attempt. PipelineChannel needs this data to reload
-                // clean context before retrying with the next model.
                 contextData: {
                     characters: [session.character],
                     chat: engineContext
-                }
+                },
+                timeoutConfig: { interChunkMs, totalMs }
             });
 
             for await (const chunk of stream) {
@@ -485,13 +479,18 @@ export class SimpleChat {
     }
 
     /**
-     * 核心业务逻辑：指令增强 (Prompt Injection)
-     * [Modified] 从 RuntimeConfigService 动态读取 system_instructions
+     * Sync prompt enhancement using pre-fetched instructions (hot path)
+     */
+    private _buildEnhancedPrompt(userInput: string, systemInstructions: string): string {
+        return `##系统指令：以下为最高优先级指令。\n${systemInstructions}\n##用户指令:${userInput}\n`;
+    }
+
+    /**
+     * Async prompt enhancement (fallback for non-streaming path)
      */
     private async _enhancePrompt(userInput: string, turnCount: number): Promise<string> {
         const system_instructions = await runtimeConfig.getSystemInstructions();
-        // 无论轮次如何，统一使用最高优先级的系统指令
-        return `##系统指令：以下为最高优先级指令。\n${system_instructions}\n##用户指令:${userInput}\n`;
+        return this._buildEnhancedPrompt(userInput, system_instructions);
     }
 
     /**
@@ -499,7 +498,7 @@ export class SimpleChat {
      */
     private async _backfillOpenRouterStats(messageId: string, generationId: string, apiKey: string): Promise<void> {
         try {
-            const response = await fetch(`https://openrouter.ai/api/v1/generation?id=${generationId}`, {
+            const response = await fetch(`https://openrouter.ai/api/v1/generations/${generationId}`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${apiKey}`

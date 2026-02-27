@@ -243,7 +243,7 @@ export class TelegramBotAdapter {
 
                     if (isFirstEdit) {
                         timer.mark('first_edit_done');
-                        logger.debug({
+                        logger.info({
                             kind: 'biz',
                             component: COMPONENT,
                             message: 'First response waterfall',

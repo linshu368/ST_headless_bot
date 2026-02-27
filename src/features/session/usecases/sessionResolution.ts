@@ -22,19 +22,22 @@ export async function resolveSessionId(
     now: number = Date.now()
 ): Promise<ResolveSessionResult> {
     const timeoutMs = timeoutMinutes * 60 * 1000;
-    const existingSessionId = await sessionStore.getCurrentSessionId(userId);
+
+    // Parallel reads (was 2 sequential HTTP calls → 1 parallel round)
+    const [existingSessionId, lastActive] = await Promise.all([
+        sessionStore.getCurrentSessionId(userId),
+        sessionStore.getLastActiveTime(userId),
+    ]);
 
     if (existingSessionId) {
-        const lastActive = await sessionStore.getLastActiveTime(userId);
-
         if (lastActive && now - lastActive > timeoutMs) {
             const newSessionId = `sess_${userId}_${now}`;
-            // Business semantics:
-            // - currentSessionId: active experience window
-            // - lastSessionId: previous (just-expired) experience window
-            await sessionStore.setLastSessionId(userId, existingSessionId);
-            await sessionStore.setCurrentSessionId(userId, newSessionId);
-            await sessionStore.setLastActiveTime(userId, now);
+            // Parallel writes (was 3 sequential → 1 parallel round)
+            await Promise.all([
+                sessionStore.setLastSessionId(userId, existingSessionId),
+                sessionStore.setCurrentSessionId(userId, newSessionId),
+                sessionStore.setLastActiveTime(userId, now),
+            ]);
             return { sessionId: newSessionId, isNew: true, expiredSessionId: existingSessionId };
         }
 
@@ -43,7 +46,10 @@ export async function resolveSessionId(
     }
 
     const newSessionId = `sess_${userId}_${now}`;
-    await sessionStore.setCurrentSessionId(userId, newSessionId);
-    await sessionStore.setLastActiveTime(userId, now);
+    // Parallel writes (was 2 sequential → 1 parallel round)
+    await Promise.all([
+        sessionStore.setCurrentSessionId(userId, newSessionId),
+        sessionStore.setLastActiveTime(userId, now),
+    ]);
     return { sessionId: newSessionId, isNew: true };
 }
