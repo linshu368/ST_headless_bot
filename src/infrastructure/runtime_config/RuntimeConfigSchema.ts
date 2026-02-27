@@ -9,6 +9,7 @@ export interface RuntimeConfigMeta {
 export interface RuntimeConfigRowInput {
     key: string;
     value: unknown;
+    text_value?: string | null;
     version?: number | string | null;
     updated_at?: string | null;
 }
@@ -37,11 +38,20 @@ const parseVersion = (value: RuntimeConfigRowInput['version']): number | null =>
 const parseUpdatedAt = (value: RuntimeConfigRowInput['updated_at']): string | null =>
     typeof value === 'string' && value.length > 0 ? value : null;
 
-const requireString = (field: string, value: unknown, key: string): string => {
-    if (typeof value !== 'string' || value.length === 0) {
-        throw new Error(`RuntimeConfigSchema: ${key}.${field} must be non-empty string`);
+const requireTextValue = (key: string, textValue: string | null | undefined): string => {
+    if (typeof textValue === 'string' && textValue.length > 0) {
+        return textValue;
     }
-    return value;
+    // 允许空字符串吗？根据业务，有些配置可能不能为空。
+    // 如果必须非空：
+    throw new Error(`RuntimeConfigSchema: ${key} must be a non-empty string in 'text_value' column`);
+};
+
+const requireString = (field: string, value: unknown, key: string): string => {
+    if (typeof value === 'string' && value.length > 0) {
+        return value;
+    }
+    throw new Error(`RuntimeConfigSchema: ${key}.${field} must be a string in 'value' column`);
 };
 
 const parseNumber = (field: string, value: unknown, key: string): number => {
@@ -115,6 +125,7 @@ export const RuntimeConfigSchema = {
 
         switch (input.key) {
             case 'ai_config_source': {
+                // 复杂对象仍然只从 value 解析
                 const value = parseAIConfigSource(input.value, input.key);
                 return { key: input.key, value: value as T, version, updated_at };
             }
@@ -133,7 +144,8 @@ export const RuntimeConfigSchema = {
             }
             case 'system_instructions':
             case 'welcome_message': {
-                const value = requireString(input.key, input.value, input.key);
+                // 纯文本配置：只读 text_value
+                const value = requireTextValue(input.key, input.text_value);
                 return { key: input.key, value: value as T, version, updated_at };
             }
             default: {

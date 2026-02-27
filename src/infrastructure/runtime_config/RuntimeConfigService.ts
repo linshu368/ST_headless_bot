@@ -41,6 +41,7 @@ interface CachedRuntimeConfigPayload<T> {
     __runtime_config_meta?: {
         version: number | null;
         updated_at: string | null;
+        text_value?: string | null;
     } | null;
     value: T;
 }
@@ -98,6 +99,7 @@ export class RuntimeConfigService {
                     const parsed = RuntimeConfigSchema.parse<T>({
                         key,
                         value,
+                        text_value: meta?.text_value,
                         version: meta?.version ?? null,
                         updated_at: meta?.updated_at ?? null,
                     });
@@ -131,7 +133,7 @@ export class RuntimeConfigService {
             try {
                 const { data, error } = await supabase
                     .from('runtime_config')
-                    .select('value,version,updated_at')
+                    .select('value,text_value,version,updated_at')
                     .eq('key', key)
                     .single();
 
@@ -139,6 +141,7 @@ export class RuntimeConfigService {
                     const parsed = RuntimeConfigSchema.parse<T>({
                         key,
                         value: data.value,
+                        text_value: data.text_value,
                         version: data.version,
                         updated_at: data.updated_at,
                     });
@@ -148,6 +151,7 @@ export class RuntimeConfigService {
                         const payload = this.wrapCachedValue(parsed.value, {
                             version: parsed.version,
                             updated_at: parsed.updated_at,
+                            text_value: data.text_value,
                         });
                         this.redisSetEx(key, payload, Math.floor(CACHE_TTL_MS / 1000)).catch(err => {
                             logger.warn({ kind: 'infra', component: COMPONENT, message: `Redis write-back failed for ${key}`, error: err });
@@ -199,7 +203,7 @@ export class RuntimeConfigService {
         try {
             const { data, error } = await supabase
                 .from('runtime_config')
-                .select('key,value,version,updated_at');
+                .select('key,value,text_value,version,updated_at');
 
             if (error) {
                 logger.warn({
@@ -227,12 +231,14 @@ export class RuntimeConfigService {
                     const parsed = RuntimeConfigSchema.parse({
                         key: row.key,
                         value: row.value,
+                        text_value: row.text_value,
                         version: row.version,
                         updated_at: row.updated_at,
                     });
                     const payload = this.wrapCachedValue(parsed.value, {
                         version: parsed.version,
                         updated_at: parsed.updated_at,
+                        text_value: row.text_value,
                     });
                     await this.redisSetEx(row.key, payload, ttlSeconds);
                 } catch (error) {
@@ -358,7 +364,7 @@ export class RuntimeConfigService {
         }
     }
 
-    private wrapCachedValue<T>(value: T, meta: { version: number | null; updated_at: string | null }): string {
+    private wrapCachedValue<T>(value: T, meta: { version: number | null; updated_at: string | null; text_value?: string | null }): string {
         return JSON.stringify({
             __runtime_config_meta: meta,
             value,
@@ -367,7 +373,7 @@ export class RuntimeConfigService {
 
     private extractCachedValue<T>(value: T | CachedRuntimeConfigPayload<T>): {
         value: T;
-        meta: { version: number | null; updated_at: string | null } | null;
+        meta: { version: number | null; updated_at: string | null; text_value?: string | null } | null;
     } {
         if (value && typeof value === 'object' && !Array.isArray(value)) {
             const obj = value as CachedRuntimeConfigPayload<T>;
