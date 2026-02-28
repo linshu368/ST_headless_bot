@@ -11,5 +11,6 @@ export interface MessageLogRecord {
     round?: number;
     full_response?: number; // seconds
     first_response_latency?: number; // seconds (time to first 5 chars)
+    trace_id?: string; // links to engineering logs for root-cause analysis
     // timestamp and id are handled by DB
 }

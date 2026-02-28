@@ -392,7 +392,7 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 }
 
                 if (streamModeEnabled) {
-                    const fullText = await parseOpenAIStream(response, streamSink, traceContext);
+                    const fullText = await parseOpenAIStream(response, streamSink, traceContext, fetchStart);
                     const responseBody = buildChatCompletionResponse(fullText, requestBody.model || model);
                     return new Response(JSON.stringify(responseBody), {
                         status: 200,
@@ -535,12 +535,11 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
     return interceptor;
 };
 
-const parseOpenAIStream = async (response: Response, sink: StreamSink | null, traceContext?: any): Promise<string> => {
+const parseOpenAIStream = async (response: Response, sink: StreamSink | null, traceContext?: any, fetchStartMs?: number): Promise<string> => {
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let fullText = '';
     let isFirstChunk = true;
-    const streamStart = Date.now();
 
     try {
         const body = response.body;
@@ -577,13 +576,14 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null, tr
                     }
 
                     if (isFirstChunk) {
+                        const now = Date.now();
                         logger.info({ 
                             kind: 'infra', 
                             component: COMPONENT, 
                             message: 'Stream First Token Arrival', 
                             meta: { 
                                 generationId: payload.id, 
-                                latencyFromStreamStart: Date.now() - streamStart 
+                                ttft: fetchStartMs ? now - fetchStartMs : undefined
                             } 
                         });
                         isFirstChunk = false;

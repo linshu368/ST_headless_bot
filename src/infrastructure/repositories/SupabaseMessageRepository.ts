@@ -52,7 +52,8 @@ export class SupabaseMessageRepository implements IMessageRepository {
                     type: record.type,
                     round: round,
                     full_response: record.full_response ? Math.round(record.full_response) : null,
-                    first_response_latency: record.first_response_latency || null
+                    first_response_latency: record.first_response_latency || null,
+                    trace_id: record.trace_id || null
                     // timestamp: database trigger will handle this
                 })
                 .select('id')

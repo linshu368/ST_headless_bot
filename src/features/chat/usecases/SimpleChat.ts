@@ -11,6 +11,7 @@ import { resolveTierFromMode } from '../domain/ModelStrategy.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 import { PipelineChannel } from '../../../infrastructure/ai/channels/PipelineChannel.js';
+import { getTraceId } from '../../../platform/tracing.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -463,7 +464,8 @@ export class SimpleChat {
                 attempt_count: executionTrace.attempt,
                 type: messageType,
                 full_response: (Date.now() - startedAtMs) / 1000,
-                first_response_latency: firstResponseMs ? firstResponseMs / 1000 : undefined
+                first_response_latency: firstResponseMs ? firstResponseMs / 1000 : undefined,
+                trace_id: getTraceId()
             }).then(messageId => {
                 if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
                     this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {
