@@ -104,6 +104,7 @@ export class RuntimeConfigService {
                         updated_at: meta?.updated_at ?? null,
                     });
                     this.logConfigMeta(key, parsed.version, parsed.updated_at, 'redis');
+                    this.logConfigValue(key, parsed.value, 'redis');
                     return parsed.value;
                 }
             } catch (error) {
@@ -159,6 +160,7 @@ export class RuntimeConfigService {
                     }
                     logger.info({ kind: 'infra', component: COMPONENT, message: `Config loaded from Supabase: ${key}` });
                     this.logConfigMeta(key, parsed.version, parsed.updated_at, 'supabase');
+                    this.logConfigValue(key, parsed.value, 'supabase');
                     return parsed.value;
                 }
 
@@ -177,6 +179,7 @@ export class RuntimeConfigService {
         // Layer 3: Static fallback (from config.ts / .env)
         logger.info({ kind: 'infra', component: COMPONENT, message: `Using static fallback for: ${key}` });
         this.logConfigMeta(key, null, null, 'fallback');
+        this.logConfigValue(key, fallback, 'fallback');
         return fallback;
     }
 
@@ -309,16 +312,6 @@ export class RuntimeConfigService {
         return this.get<string>('welcome_message', config.telegram.welcome_message);
     }
 
-    /** 获取流式生成分块间隔超时（ms） */
-    async getStreamInterChunkTimeout(): Promise<number> {
-        return this.get<number>('ai_stream_inter_chunk_timeout', config.timeouts.interChunk);
-    }
-
-    /** 获取流式生成总超时（ms） */
-    async getStreamTotalTimeout(): Promise<number> {
-        return this.get<number>('ai_stream_total_timeout', config.timeouts.total);
-    }
-
     // =============================================
     // Private: Redis Operations (Upstash REST API)
     // =============================================
@@ -392,6 +385,48 @@ export class RuntimeConfigService {
             message: 'Runtime config meta',
             meta: { key, version, updated_at, source },
         });
+    }
+
+    private logConfigValue(key: string, value: unknown, source: 'redis' | 'supabase' | 'fallback'): void {
+        logger.debug({
+            kind: 'infra',
+            component: COMPONENT,
+            message: 'Runtime config value',
+            meta: { key, source, value: this.summarizeValue(key, value) },
+        });
+    }
+
+    private summarizeValue(key: string, value: unknown): unknown {
+        if (key === 'ai_config_source' && value && typeof value === 'object') {
+            const source = value as AIConfigSourceData;
+            const channels: Record<string, Array<Record<string, unknown>>> = {};
+            for (const [channelId, steps] of Object.entries(source.channels || {})) {
+                channels[channelId] = Array.isArray(steps)
+                    ? steps.map(step => ({
+                        id: step.id,
+                        provider: step.provider,
+                        url: step.url,
+                        model: step.model,
+                        firstchunk_timeout: step.firstchunk_timeout,
+                        total_timeout: step.total_timeout,
+                    }))
+                    : [];
+            }
+            return {
+                channels,
+                tier_mapping: source.tier_mapping,
+            };
+        }
+
+        if (key === 'system_instructions' || key === 'welcome_message') {
+            const text = typeof value === 'string' ? value : '';
+            return {
+                length: text.length,
+                preview: text.slice(0, 120),
+            };
+        }
+
+        return value;
     }
 
     private async acquireLock(key: string): Promise<boolean> {

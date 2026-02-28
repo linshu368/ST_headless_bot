@@ -131,9 +131,7 @@ export const RuntimeConfigSchema = {
             }
             case 'max_history_items':
             case 'history_retention_count':
-            case 'session_timeout_minutes':
-            case 'ai_stream_inter_chunk_timeout':
-            case 'ai_stream_total_timeout': {
+            case 'session_timeout_minutes': {
                 const value = parseNumber(input.key, input.value, input.key);
                 return { key: input.key, value: value as T, version, updated_at };
             }

@@ -3,7 +3,6 @@ import type { IAIChannel } from '../../../features/chat/ports/IAIChannel.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { logger } from '../../../platform/logger.js';
 import config from '../../../platform/config.js';
-import { runtimeConfig } from '../../runtime_config/RuntimeConfigService.js';
 
 
 export class PipelineChannel implements IAIChannel {
@@ -154,10 +153,9 @@ export class PipelineChannel implements IAIChannel {
             throw new Error('PipelineChannel requires engine and userInput in context');
         }
 
-        // Use pre-fetched timeouts if available (avoids 2 extra Redis calls)
+        // Use pre-fetched inter-chunk timeout if available (avoids extra config lookup)
         const preloaded = context.timeoutConfig;
-        const interChunkDefaultMs = preloaded?.interChunkMs ?? await runtimeConfig.getStreamInterChunkTimeout();
-        const totalDefaultMs = preloaded?.totalMs ?? await runtimeConfig.getStreamTotalTimeout();
+        const interChunkDefaultMs = preloaded?.interChunkMs ?? config.timeouts.interChunk;
 
         // 顺序执行 Pipeline 中的 Profile
         for (let i = 0; i < this.steps.length; i++) {
@@ -208,7 +206,27 @@ export class PipelineChannel implements IAIChannel {
                 // Get timeouts from config/profile
                 const ttftMs = profile.firstchunk_timeout || 7000; // Default 7s if not set
                 const interChunkMs = interChunkDefaultMs || config.timeouts.interChunk;
-                const totalMs = profile.total_timeout || totalDefaultMs || config.timeouts.total;
+                if (!profile.total_timeout) {
+                    throw new Error(`Pipeline profile missing total_timeout: ${profile.id}`);
+                }
+                const totalMs = profile.total_timeout;
+                logger.debug({
+                    kind: 'infra',
+                    component: 'PipelineChannel',
+                    message: 'Pipeline timeout config resolved',
+                    meta: {
+                        pipelineId: this.pipelineId,
+                        profileId: profile.id,
+                        ttftMs,
+                        interChunkMs,
+                        totalMs,
+                        sources: {
+                            ttft: profile.firstchunk_timeout ? 'profile' : 'default',
+                            interChunk: preloaded?.interChunkMs ? 'preloaded' : 'config.ts',
+                            total: 'profile',
+                        },
+                    },
+                });
 
                 const managed = this.managedStream(
                     rawStream, 

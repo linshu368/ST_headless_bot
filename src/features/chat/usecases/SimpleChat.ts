@@ -4,6 +4,7 @@ import {
     createInitialStreamScheduleState,
 } from '../rules/streamingSchedule.js';
 import { logger } from '../../../platform/logger.js';
+import config from '../../../platform/config.js';
 import type { RequestTimer } from '../../../platform/RequestTimer.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
 import type { IMessageRepository } from '../ports/IMessageRepository.js';
@@ -327,7 +328,7 @@ export class SimpleChat {
 
         // Parallel: loadContext + all config lookups
         // (was 6+ sequential Redis calls → 1 parallel round)
-        const [, userMode, aiConfigSource, systemInstructions, interChunkMs, totalMs] = await Promise.all([
+        const [, userMode, aiConfigSource, systemInstructions, interChunkMs] = await Promise.all([
             session.engine.loadContext({
                 characters: [session.character],
                 chat: engineContext
@@ -335,10 +336,15 @@ export class SimpleChat {
             this.sessionManager.getUserModelMode(userId),
             runtimeConfig.getAIConfigSource(),
             runtimeConfig.getSystemInstructions(),
-            runtimeConfig.getStreamInterChunkTimeout(),
-            runtimeConfig.getStreamTotalTimeout(),
+            config.timeouts.interChunk,
         ]);
         timer?.mark('context_loaded');
+        logger.debug({
+            kind: 'biz',
+            component: COMPONENT,
+            message: 'Stream timeout config resolved',
+            meta: { interChunkMs, source: 'config.ts' },
+        });
 
         const startedAtMs = Date.now();
         let firstResponseMs: number | undefined;
@@ -382,7 +388,7 @@ export class SimpleChat {
                     characters: [session.character],
                     chat: engineContext
                 },
-                timeoutConfig: { interChunkMs, totalMs }
+                timeoutConfig: { interChunkMs }
             });
 
             for await (const chunk of stream) {
