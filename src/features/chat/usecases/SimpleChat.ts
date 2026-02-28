@@ -498,20 +498,33 @@ export class SimpleChat {
      */
     private async _backfillOpenRouterStats(messageId: string, generationId: string, apiKey: string): Promise<void> {
         try {
-            const response = await fetch(`https://openrouter.ai/api/v1/generations/${generationId}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`
-                }
-            });
+            const statsUrl = `https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(generationId)}`;
+            const maxAttempts = 6;
+            const retryDelayMs = 1500;
+            let stats: any = null;
 
-            if (!response.ok) {
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                const response = await fetch(statsUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`
+                    }
+                });
+
+                if (response.ok) {
+                    const json = await response.json();
+                    stats = json.data;
+                    break;
+                }
+
+                if (response.status === 404 && attempt < maxAttempts) {
+                    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+                    continue;
+                }
+
                 logger.warn({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats fetch failed', meta: { status: response.status } });
                 return;
             }
-
-            const json = await response.json();
-            const stats = json.data;
 
             if (stats) {
                 await this.messageRepository.updateMessageStats(messageId, {
