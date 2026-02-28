@@ -299,4 +299,3 @@ module.exports = function createCoreInstance(context) {
 
 // Run
 buildBundle();
-

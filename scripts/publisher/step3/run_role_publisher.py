@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -260,6 +260,46 @@ async def publish_unpublished_roles(
     print(f"✅ 本轮成功发布 {published_count} 个角色")
     return published_count
 
+def seconds_until_next_run(target_hour: int = 9, target_minute: int = 30) -> float:
+    """返回距下一次本地时间目标点的秒数（默认 09:30）"""
+    now = datetime.now()
+    today_target = now.replace(
+        hour=target_hour,
+        minute=target_minute,
+        second=0,
+        microsecond=0,
+    )
+    if now < today_target:
+        next_run = today_target
+    else:
+        next_run = today_target + timedelta(days=1)
+    return (next_run - now).total_seconds()
+
+async def run_daily_publish(
+    client: TelegramClient,
+    channel: str,
+    supabase: Client,
+) -> None:
+    daily_limit = DAILY_PUBLISH_AMOUNT if DAILY_PUBLISH_AMOUNT > 0 else None
+    if daily_limit:
+        print(f"🎯 启动每日限额模式：目标发布 {daily_limit} 个角色")
+    else:
+        print("ℹ️ DAILY_PUBLISH_AMOUNT 未配置或 <= 0，将发布所有未发布角色后退出")
+
+    roles = get_unpublished_roles(supabase)
+    published_count = await publish_unpublished_roles(
+        client,
+        channel,
+        roles,
+        supabase,
+        daily_limit=daily_limit,
+    )
+    
+    if daily_limit and published_count >= daily_limit:
+        print(f"🏁 今日发布数量已达到 {daily_limit}，本轮结束")
+    else:
+        print("🏁 本轮未发布角色已处理完毕或无可发布角色")
+
 async def main() -> None:
     assert API_ID and API_HASH and SESSION_STRING, "Missing TG_API_ID/TG_API_HASH/TG_SESSION_STRING"
     channel = parse_channel_username(ROLE_CHANNEL_URL)
@@ -284,38 +324,19 @@ async def main() -> None:
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH, proxy=proxy)
     async with client:
         print("🚀 角色发布脚本启动")
-        
-        # 旧的 15 分钟循环发布逻辑（保留注释以备后续启用）
-        # while True:
-        #     try:
-        #         roles = get_unpublished_roles(supabase)
-        #         await publish_unpublished_roles(client, channel, roles, supabase)
-        #         print(f"⏰ 等待 {CHECK_INTERVAL_MINUTES} 分钟后进行下次检查...")
-        #         await asyncio.sleep(CHECK_INTERVAL_MINUTES * 60)
-        #     except Exception as e:
-        #         print(f"❌ 检查循环出错: {e}")
-        #         print(f"⏰ 等待 {RETRY_INTERVAL_MINUTES} 分钟后重试...")
-        #         await asyncio.sleep(RETRY_INTERVAL_MINUTES * 60)
 
-        daily_limit = DAILY_PUBLISH_AMOUNT if DAILY_PUBLISH_AMOUNT > 0 else None
-        if daily_limit:
-            print(f"🎯 启动每日限额模式：目标发布 {daily_limit} 个角色")
-        else:
-            print("ℹ️ DAILY_PUBLISH_AMOUNT 未配置或 <= 0，将发布所有未发布角色后退出")
-        
-        roles = get_unpublished_roles(supabase)
-        published_count = await publish_unpublished_roles(
-            client,
-            channel,
-            roles,
-            supabase,
-            daily_limit=daily_limit,
-        )
-        
-        if daily_limit and published_count >= daily_limit:
-            print(f"🏁 今日发布数量已达到 {daily_limit}，脚本结束")
-        else:
-            print("🏁 本轮未发布角色已处理完毕或无可发布角色，脚本结束")
+        while True:
+            try:
+                wait_seconds = seconds_until_next_run(9, 30)
+                next_run_time = datetime.now() + timedelta(seconds=wait_seconds)
+                print(f"⏰ 下次自动发布: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}（本地时间）")
+                await asyncio.sleep(wait_seconds)
+
+                await run_daily_publish(client, channel, supabase)
+            except Exception as e:
+                print(f"❌ 每日发布任务出错: {e}")
+                print(f"⏰ 等待 {RETRY_INTERVAL_MINUTES} 分钟后重试...")
+                await asyncio.sleep(RETRY_INTERVAL_MINUTES * 60)
 
 if __name__ == "__main__":
     asyncio.run(main())
