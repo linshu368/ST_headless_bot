@@ -172,7 +172,14 @@ export class PipelineChannel implements IAIChannel {
             });
 
             try {
-                // 0. Reset engine state before retries to prevent chat pollution.
+                // 0a. Reset trace fields that are per-step (prevents stale data from leaking across retries).
+                // generation_id is set by FetchInterceptor during streaming with a write-once guard,
+                // so we must clear it here to ensure each step captures its own generation_id.
+                if (context?.trace) {
+                    context.trace.generation_id = null;
+                }
+
+                // 0b. Reset engine state before retries to prevent chat pollution.
                 // After a failed step, win.chat contains stale messages from the failed Generate().
                 // Reloading context restores a clean chat state for the next attempt.
                 if (i > 0 && context.contextData) {

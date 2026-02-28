@@ -572,6 +572,15 @@ export class STEngineAdapter implements ISTEngine {
                             pendingResolve = resolve;
                             pendingReject = reject;
                         });
+                    },
+                    return: (): Promise<IteratorResult<T>> => {
+                        isClosed = true;
+                        if (pendingResolve) {
+                            pendingResolve({ value: undefined as T, done: true });
+                            pendingResolve = null;
+                            pendingReject = null;
+                        }
+                        return Promise.resolve({ value: undefined as T, done: true });
                     }
                 };
             }
