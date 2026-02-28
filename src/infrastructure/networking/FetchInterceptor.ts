@@ -305,7 +305,8 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 }
 
                 // [ADDED] Log the full prompt and request body for debugging
-                logger.info({
+                const buildStart = Date.now();
+                logger.debug({
                     kind: 'sys',
                     component: COMPONENT,
                     message: 'Constructed LLM Request Body',
@@ -327,16 +328,45 @@ export const createFetchInterceptor = (config: FetchInterceptorConfig): FetchInt
                 }
 
                 const bodyStr = JSON.stringify(requestBody);
+                const buildDuration = Date.now() - buildStart;
                 
                 // Real Request to LLM
                 // Note: We use the real 'fetch' here, not the intercepted one (recursion avoidance)
                 currentAbortController = new AbortController();
+                
+                logger.info({ 
+                    kind: 'infra', 
+                    component: COMPONENT, 
+                    message: 'Sending API Request', 
+                    meta: { 
+                        targetUrl, 
+                        model: requestBody.model || model,
+                        buildDuration 
+                    } 
+                });
+
+                const fetchStart = Date.now();
                 const response = await fetch(targetUrl, {
                     method: 'POST',
                     headers: headers,
                     body: bodyStr,
                     agent: new ProxyAgent(),
                     signal: currentAbortController.signal as any
+                });
+                const ttfb = Date.now() - fetchStart;
+
+                // Try to get generation ID from headers (OpenRouter)
+                const headerGenerationId = response.headers.get('x-openrouter-generation-id');
+                
+                logger.info({ 
+                    kind: 'infra', 
+                    component: COMPONENT, 
+                    message: 'API Response Headers Received', 
+                    meta: { 
+                        status: response.status, 
+                        ttfb,
+                        generationId: headerGenerationId
+                    } 
                 });
 
                 if (!response.ok) {
@@ -509,6 +539,8 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null, tr
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let fullText = '';
+    let isFirstChunk = true;
+    const streamStart = Date.now();
 
     try {
         const body = response.body;
@@ -542,6 +574,19 @@ const parseOpenAIStream = async (response: Response, sink: StreamSink | null, tr
                         if (payload.model && !traceContext.model_from_stream) {
                             traceContext.model_from_stream = payload.model;
                         }
+                    }
+
+                    if (isFirstChunk) {
+                        logger.info({ 
+                            kind: 'infra', 
+                            component: COMPONENT, 
+                            message: 'Stream First Token Arrival', 
+                            meta: { 
+                                generationId: payload.id, 
+                                latencyFromStreamStart: Date.now() - streamStart 
+                            } 
+                        });
+                        isFirstChunk = false;
                     }
 
                     const delta = payload?.choices?.[0]?.delta?.content;

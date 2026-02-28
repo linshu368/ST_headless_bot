@@ -69,9 +69,23 @@ export class PipelineChannel implements IAIChannel {
                         break;
                     }
 
-                    hasReceivedFirstToken = true;
+                    if (!hasReceivedFirstToken) {
+                        const ttft = Date.now() - startTime;
+                        logger.info({ 
+                            kind: 'infra', 
+                            component: 'PipelineChannel', 
+                            message: 'ManagedStream: First Token Received', 
+                            meta: { 
+                                ttft, 
+                                pipelineId: meta.pipelineId, 
+                                profileId: meta.profileId 
+                            } 
+                        });
+                        hasReceivedFirstToken = true;
+                    }
+                    
                     yield result.value;
-
+                
                 } catch (error: any) {
                     clearTimeout(timer!);
 
@@ -96,7 +110,19 @@ export class PipelineChannel implements IAIChannel {
                         // Otherwise it was Step Timeout
                         if (!hasReceivedFirstToken) {
                             // Stage 1: TTFT Failure -> Throw to trigger retry
-                            throw new Error(`TTFT timeout exceeded (${ttftMs}ms)`);
+                            const reason = `TTFT timeout exceeded (${ttftMs}ms)`;
+                            logger.info({ 
+                                kind: 'infra', 
+                                component: 'PipelineChannel', 
+                                message: 'Step Failed: TTFT Timeout', 
+                                meta: { 
+                                    ttftMs, 
+                                    duration: currentElapsed,
+                                    pipelineId: meta.pipelineId, 
+                                    profileId: meta.profileId 
+                                } 
+                            });
+                            throw new Error(reason);
                         } else {
                             // Stage 2: Inter-chunk Timeout -> Success (Truncate)
                             logger.warn({
@@ -238,6 +264,16 @@ export class PipelineChannel implements IAIChannel {
                     throw error;
                 }
                 // 否则继续下一次循环 (Retry)
+                logger.info({ 
+                    kind: 'infra', 
+                    component: 'PipelineChannel', 
+                    message: `Switching to next step due to failure`,
+                    meta: { 
+                        failedStep: i + 1,
+                        reason: error instanceof Error ? error.message : String(error),
+                        nextStep: i + 2
+                    }
+                });
             }
         }
     }
