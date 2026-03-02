@@ -70,8 +70,12 @@ async function main() {
         message: message
     };
 
-    // 输出 JSON 给调用方
-    console.log(JSON.stringify(commitLog, null, 2));
+    // 输出 JSON 给调用方，确保 stdout 刷新完毕后再退出。
+    // 当 stdout 是 pipe（shell 命令替换）时 write 是异步的，
+    // 直接 process.exit() 会截断输出导致 jq 解析失败。
+    process.stdout.write(JSON.stringify(commitLog, null, 2) + '\n', () => {
+        process.exit(0);
+    });
 }
 
 main().catch(error => {

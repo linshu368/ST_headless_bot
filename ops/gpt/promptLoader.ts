@@ -1,13 +1,16 @@
 /**
  * Prompt 模板加载器
  * 用于加载和渲染 prompt 模板
+ *
+ * 读取路径：Supabase 直读（via opsConfigReader）→ 本地文件 fallback
+ * 不经过 Redis / RuntimeConfigService，避免对 git hook 主流程引入额外延迟。
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { collectSrcCode } from './srcCollector.js';
-import { runtimeConfig } from '../../src/infrastructure/runtime_config/RuntimeConfigService.js';
+import { readOpsConfig } from './opsConfigReader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,7 +28,7 @@ const RUNTIME_PROMPT_KEYS = {
 } as const;
 
 /**
- * 读取 prompt 模板文件
+ * 读取 prompt 模板文件（本地 fallback）
  */
 export function readPromptTemplate(templatePath: string): string {
     const fullPath = path.isAbsolute(templatePath) 
@@ -37,20 +40,6 @@ export function readPromptTemplate(templatePath: string): string {
     }
     
     return fs.readFileSync(fullPath, 'utf-8');
-}
-
-async function readPromptTemplateFromRuntime(templatePath: string, runtimeKey?: string): Promise<string> {
-    const fallback = readPromptTemplate(templatePath);
-    if (!runtimeKey) return fallback;
-    try {
-        if (runtimeKey === RUNTIME_PROMPT_KEYS.commitProcessDiff) {
-            return await runtimeConfig.getOpsPromptCommitProcessDiff(fallback);
-        }
-        return await runtimeConfig.get<string>(runtimeKey, fallback);
-    } catch (error: any) {
-        console.warn(`[PromptLoader] runtime_config 读取失败: ${runtimeKey}`, error?.message || error);
-        return fallback;
-    }
 }
 
 /**
@@ -72,8 +61,8 @@ export async function loadProjectContext(): Promise<{ arch: string; principle: s
     const fallbackPrinciple = loadFile('long/principle.txt');
 
     const [arch, principle] = await Promise.all([
-        runtimeConfig.getOpsPromptProjectArch(fallbackArch),
-        runtimeConfig.getOpsPromptProjectPrinciple(fallbackPrinciple),
+        readOpsConfig(RUNTIME_PROMPT_KEYS.projectArch, fallbackArch),
+        readOpsConfig(RUNTIME_PROMPT_KEYS.projectPrinciple, fallbackPrinciple),
     ]);
 
     return { arch, principle };
@@ -84,14 +73,15 @@ export async function loadProjectContext(): Promise<{ arch: string; principle: s
  */
 export const PromptTemplates = {
     /**
-     * Commit 消息生成模板
+     * Commit 消息生成模板（Supabase 直读 → 本地文件 fallback）
      */
     get commitProcessDiff(): Promise<string> {
-        return readPromptTemplateFromRuntime('commit_process_diff.prompt', RUNTIME_PROMPT_KEYS.commitProcessDiff);
+        const fallback = readPromptTemplate('commit_process_diff.prompt');
+        return readOpsConfig(RUNTIME_PROMPT_KEYS.commitProcessDiff, fallback);
     },
 
     /**
-     * Push 日志目录名生成模板
+     * Push 日志目录名生成模板（纯本地，无需 runtime_config）
      */
     get pushLogTitle(): string {
         return readPromptTemplate('push_log_title.prompt');

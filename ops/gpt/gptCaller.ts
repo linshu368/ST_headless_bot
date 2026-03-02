@@ -30,6 +30,7 @@ export class GptCaller {
     private apiKeySource: string;
     private apiUrlSource: string;
     private modelSource: string;
+    private readonly logPrefix = '[GPT Caller]';
 
     constructor(options: GptCallerOptions = {}) {
         this.apiKey = process.env.OPENAI_API_KEY || '';
@@ -56,8 +57,8 @@ export class GptCaller {
      */
     async getResponse(prompt: string): Promise<string> {
         const preview = prompt.slice(0, 50);
-        console.error('[GPT Config] apiKeySource=%s apiUrlSource=%s modelSource=%s model=%s', this.apiKeySource, this.apiUrlSource, this.modelSource, this.model);
-        console.error('[GPT Prompt] preview(50)=%s', preview);
+        this.logLine(`[GPT Config] apiKeySource=${this.apiKeySource} apiUrlSource=${this.apiUrlSource} modelSource=${this.modelSource} model=${this.model}`);
+        this.logLine(`[GPT Prompt] preview(50)=${preview}`);
         const headers = {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
@@ -92,7 +93,10 @@ export class GptCaller {
             }
 
             const result = await response.json() as any;
-            return result.choices?.[0]?.message?.content || '';
+            const content = result.choices?.[0]?.message?.content || '';
+            const responsePreview = content.slice(0, 50);
+            this.logLine(`[GPT Response] preview(50)=${responsePreview}`);
+            return content;
         } catch (error: any) {
             clearTimeout(timeoutId);
             if (error.name === 'AbortError') {
@@ -121,6 +125,15 @@ export class GptCaller {
             console.error(JSON.stringify(logData, null, 2));
         } catch (error: any) {
             console.warn(`[GPT Payload] 记录失败: ${error.message}`);
+        }
+    }
+
+    private logLine(message: string): void {
+        try {
+            process.stderr.write(`${this.logPrefix} ${message}\n`);
+        } catch {
+            // Fallback to console if stderr is unavailable
+            console.error(`${this.logPrefix} ${message}`);
         }
     }
 }

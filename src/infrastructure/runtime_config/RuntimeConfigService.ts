@@ -196,6 +196,10 @@ export class RuntimeConfigService {
         this.refreshTimer = setInterval(() => {
             this.refreshAllToRedis().catch(() => {});
         }, REFRESH_INTERVAL_MS);
+        // Allow the process to exit even if this timer is still active.
+        // Critical for short-lived CLI scripts (e.g. ops/git hooks) that
+        // import RuntimeConfigService but should not be kept alive by it.
+        this.refreshTimer.unref();
     }
 
     private async refreshAllToRedis(): Promise<void> {
@@ -311,21 +315,6 @@ export class RuntimeConfigService {
     /** 获取 Bot 启动欢迎语 */
     async getWelcomeMessage(): Promise<string> {
         return this.get<string>('welcome_message', config.telegram.welcome_message);
-    }
-
-    /** 获取运维 Prompt：commit_process_diff */
-    async getOpsPromptCommitProcessDiff(fallback: string): Promise<string> {
-        return this.get<string>('ops_prompt_commit_process_diff', fallback);
-    }
-
-    /** 获取运维 Prompt：项目架构说明 */
-    async getOpsPromptProjectArch(fallback: string): Promise<string> {
-        return this.get<string>('ops_prompt_project_arch', fallback);
-    }
-
-    /** 获取运维 Prompt：项目原则说明 */
-    async getOpsPromptProjectPrinciple(fallback: string): Promise<string> {
-        return this.get<string>('ops_prompt_project_principle', fallback);
     }
 
     /** 获取流式首次上屏字符数 */
