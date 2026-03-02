@@ -16,22 +16,7 @@ export class SupabaseMessageRepository implements IMessageRepository {
         }
 
         try {
-            // 1. Calculate Round (if not provided)
-            let round = record.round;
-            if (round === undefined && record.role_id) {
-                const { count, error: countError } = await supabase
-                    .from('messages')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('user_id', record.user_id)
-                    .eq('role_id', record.role_id);
-                
-                if (!countError && count !== null) {
-                    round = count + 1;
-                } else {
-                    // Fallback to 1 if query fails
-                    round = 1;
-                }
-            }
+            const round = record.round ?? 0;
 
             // Ensure history is a string if it's an object/array
             const historyContent = typeof record.history === 'string' 

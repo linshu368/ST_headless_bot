@@ -30,6 +30,7 @@ export interface ChatSession {
     history: OpenAIMessage[];
     character: any; // ST V2 Spec
     turnCount: number;
+    round: number; // context-continuous depth: accumulates within same context, resets on new chat / switch character
 }
 
 /**
@@ -242,13 +243,14 @@ export class SessionManager {
             });
             sessionDataPromise = this.sessionStore.getSessionData(expiredSessionId).then(prevData => {
                 if (prevData) {
-                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Session context carried over from expired session', meta: { expiredSessionId, roleId: prevData.role_id } });
+                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Session context carried over from expired session', meta: { expiredSessionId, roleId: prevData.role_id, round: prevData.round } });
+                    // turn_count resets (session-scoped), round carries over (context-continuous)
                     return { ...prevData, turn_count: 0 } as Record<string, unknown>;
                 }
-                return { turn_count: 0 } as Record<string, unknown>;
+                return { turn_count: 0, round: 0 } as Record<string, unknown>;
             }).catch(error => {
                 logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to carry over session data', error });
-                return { turn_count: 0 } as Record<string, unknown>;
+                return { turn_count: 0, round: 0 } as Record<string, unknown>;
             });
         } else {
             historyPromise = Promise.resolve([]);
@@ -362,22 +364,30 @@ export class SessionManager {
             turnCount = Math.floor(history.length / 2);
         }
 
+        // Initialize Round (context-continuous depth)
+        let round = 0;
+        if (existingSessionData && typeof existingSessionData.round === 'number') {
+            round = existingSessionData.round;
+        } else if (history.length > 0) {
+            round = Math.floor(history.length / 2);
+        }
+
         // NOTE: We do NOT inject first_mes into history here anymore.
         // It should be constructed dynamically during prompt assembly to keep Redis clean.
 
         // Persist session metadata (fire-and-forget: not on critical path)
-        if (this.sessionStore) {
-            const mergedData = {
-                ...(existingSessionData || {}),
-                session_id: sessionId,
-                user_id: userId,
-                role_id: character.extensions?.role_id,
-                turn_count: turnCount,
-            };
-            this.sessionStore.setSessionData(sessionId, mergedData).catch(error => {
-                logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to persist session metadata (non-fatal)', error, meta: { sessionId } });
-            });
-        }
+        // IMPORTANT: round is excluded — it is only mutated by appendMessages (+1),
+        // resetSessionHistory (=0), switchCharacter (=0), restoreSnapshot (=snapshot.round).
+        // This fire-and-forget uses _updateSessionData (merge) so it never clobbers
+        // a round value written by those authoritative call-sites.
+        this._updateSessionData(sessionId, {
+            session_id: sessionId,
+            user_id: userId,
+            role_id: character.extensions?.role_id,
+            turn_count: turnCount,
+        }).catch(error => {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to persist session metadata (non-fatal)', error, meta: { sessionId } });
+        });
 
         return {
             sessionId,
@@ -385,7 +395,8 @@ export class SessionManager {
             engine,
             history,
             character,
-            turnCount
+            turnCount,
+            round
         };
     }
 
@@ -404,7 +415,7 @@ export class SessionManager {
         // 2. Resolve Session ID (respects experience window, auto-touch)
         const { sessionId } = await this._resolveSessionId(userId);
 
-        // 3. Clear History & Update Metadata
+        // 3. Clear History & Update Metadata (context broken → round resets)
         if (this.sessionStore) {
             try {
                 await this.sessionStore.setMessages(sessionId, []);
@@ -412,6 +423,7 @@ export class SessionManager {
                     role_id: character.extensions?.role_id,
                     post_link: character.extensions?.post_link,
                     avatar: character.extensions?.avatar,
+                    round: 0,
                 });
                 logger.info({ kind: 'biz', component: COMPONENT, message: 'Session updated for new character', meta: { sessionId, roleId: character.extensions?.role_id } });
             } catch (error) {
@@ -427,14 +439,15 @@ export class SessionManager {
         if (messages.length === 0) return;
         session.history.push(...messages);
 
-        // Update Turn Count
+        // Update Turn Count & Round
         const hasUser = messages.some(m => m.role === 'user');
         const hasAssistant = messages.some(m => m.role === 'assistant');
-        let turnCountUpdated = false;
+        let countersUpdated = false;
 
         if (hasUser && hasAssistant) {
             session.turnCount += 1;
-            turnCountUpdated = true;
+            session.round += 1;
+            countersUpdated = true;
         }
 
         if (!this.sessionStore) {
@@ -449,9 +462,10 @@ export class SessionManager {
                 await this.sessionStore.appendMessage(session.sessionId, message);
             }
 
-            if (turnCountUpdated) {
+            if (countersUpdated) {
                 await this._updateSessionData(session.sessionId, {
                     turn_count: session.turnCount,
+                    round: session.round,
                 });
             }
         } catch (error) {
@@ -530,7 +544,8 @@ export class SessionManager {
     }
 
     /**
-     * Clear session history for a fresh start, preserving metadata (role, turn_count)
+     * Clear session history for a fresh start, preserving metadata (role) but resetting counters.
+     * Context is broken → round resets to 0.
      */
     async resetSessionHistory(userId: string): Promise<void> {
         if (!this.sessionStore) return;
@@ -540,8 +555,8 @@ export class SessionManager {
 
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Resetting session history', meta: { userId, sessionId } });
 
-        // Clear messages (metadata preserved in separate sessionData key)
         await this.sessionStore.setMessages(sessionId, []);
+        await this._updateSessionData(sessionId, { round: 0 });
     }
 
     async getUserModelMode(userId: string): Promise<string> {
@@ -594,7 +609,8 @@ export class SessionManager {
             userId, 
             roleId, 
             fullName, 
-            session.history
+            session.history,
+            session.round
         );
     }
 
@@ -634,18 +650,20 @@ export class SessionManager {
                 // Replace history with snapshot's history
                 await this.sessionStore.setMessages(sessionId, snapshot.history || []);
 
-                // Update session metadata (reset turn_count to match snapshot history)
+                // Restore session metadata including round (context-continuous from snapshot)
+                const restoredRound = snapshot.round ?? Math.floor((snapshot.history?.length || 0) / 2);
                 await this._updateSessionData(sessionId, {
                     role_id: snapshot.role_id,
                     post_link: character.extensions?.post_link,
                     avatar: character.extensions?.avatar,
+                    round: restoredRound,
                 });
 
                 logger.info({ 
                     kind: 'biz', 
                     component: COMPONENT, 
                     message: 'Snapshot restored into current session', 
-                    meta: { userId, snapshotId, sessionId } 
+                    meta: { userId, snapshotId, sessionId, round: restoredRound } 
                 });
                 return true;
 

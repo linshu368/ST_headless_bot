@@ -10,12 +10,13 @@ export interface ChatSnapshot {
     role_id: string;
     snapshot_name: string;
     history: OpenAIMessage[];
+    round: number;
     created_at: string;
 }
 
 export class SupabaseSnapshotRepository {
     
-    async createSnapshot(userId: string, roleId: string, snapshotName: string, messages: OpenAIMessage[]): Promise<string | null> {
+    async createSnapshot(userId: string, roleId: string, snapshotName: string, messages: OpenAIMessage[], round: number): Promise<string | null> {
         if (!supabase) {
             logger.warn({ kind: 'infra', component: COMPONENT, message: 'Supabase client not initialized' });
             return null;
@@ -28,7 +29,8 @@ export class SupabaseSnapshotRepository {
                     user_id: userId,
                     role_id: roleId,
                     snapshot_name: snapshotName,
-                    history: messages
+                    history: messages,
+                    round
                 })
                 .select('id')
                 .single();

@@ -469,6 +469,7 @@ export class SimpleChat {
                 model_name: executionTrace.model,
                 attempt_count: executionTrace.attempt,
                 type: messageType,
+                round: session.round + 1,
                 full_response: (Date.now() - startedAtMs) / 1000,
                 first_response_latency: firstResponseMs ? firstResponseMs / 1000 : undefined,
                 trace_id: getTraceId()

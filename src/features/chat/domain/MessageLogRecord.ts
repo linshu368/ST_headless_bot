@@ -8,7 +8,7 @@ export interface MessageLogRecord {
     model_name: string | null;
     attempt_count: number | null;
     type: 'normal' | 'regenerate';
-    round?: number;
+    round?: number; // context-continuous depth: accumulates within same context, resets on new chat / switch character
     full_response?: number; // seconds
     first_response_latency?: number; // seconds (time to first 5 chars)
     trace_id?: string; // links to engineering logs for root-cause analysis
