@@ -57,6 +57,10 @@ export interface Config {
     session: {
         timeoutMinutes: number;
     };
+    streaming: {
+        firstUpdateChars: number;
+        regularUpdateIntervalSec: number;
+    };
 }
 
 const config: Config = {
@@ -109,6 +113,10 @@ const config: Config = {
     },
     session: {
         timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || '30'),
+    },
+    streaming: {
+        firstUpdateChars: Number(process.env.STREAMING_FIRST_UPDATE_CHARS || '5'),
+        regularUpdateIntervalSec: Number(process.env.STREAMING_REGULAR_UPDATE_INTERVAL_SEC || '2'),
     },
     // --- 运行时配置 (已迁移至 Supabase runtime_config 表) ---
     // 以下为静态 fallback 默认值，仅在 Supabase + Redis 均不可用时启用

@@ -9,8 +9,13 @@ export interface StreamScheduleDecision {
     isFirstUpdate: boolean;
 }
 
-export const STREAMING_FIRST_UPDATE_CHARS = 5;
-export const STREAMING_REGULAR_UPDATE_INTERVAL_MS = 2000;
+export interface StreamScheduleConfig {
+    firstUpdateChars: number;
+    regularUpdateIntervalSec: number;
+}
+
+export const DEFAULT_STREAMING_FIRST_UPDATE_CHARS = 5;
+export const DEFAULT_STREAMING_REGULAR_UPDATE_INTERVAL_SEC = 2;
 
 export const createInitialStreamScheduleState = (): StreamScheduleState => ({
     textLength: 0,
@@ -20,11 +25,14 @@ export const createInitialStreamScheduleState = (): StreamScheduleState => ({
 
 export const applyStreamChar = (
     state: StreamScheduleState,
-    nowMs: number
+    nowMs: number,
+    scheduleConfig?: StreamScheduleConfig,
 ): { nextState: StreamScheduleState; decision: StreamScheduleDecision | null } => {
+    const firstUpdateChars = scheduleConfig?.firstUpdateChars ?? DEFAULT_STREAMING_FIRST_UPDATE_CHARS;
+    const regularIntervalMs = (scheduleConfig?.regularUpdateIntervalSec ?? DEFAULT_STREAMING_REGULAR_UPDATE_INTERVAL_SEC) * 1000;
     const nextLength = state.textLength + 1;
 
-    if (!state.hasFirstUpdate && nextLength >= STREAMING_FIRST_UPDATE_CHARS) {
+    if (!state.hasFirstUpdate && nextLength >= firstUpdateChars) {
         return {
             nextState: {
                 textLength: nextLength,
@@ -39,7 +47,7 @@ export const applyStreamChar = (
     }
 
     if (state.hasFirstUpdate && state.lastUpdateAtMs !== null) {
-        if (nowMs - state.lastUpdateAtMs >= STREAMING_REGULAR_UPDATE_INTERVAL_MS) {
+        if (nowMs - state.lastUpdateAtMs >= regularIntervalMs) {
             return {
                 nextState: {
                     textLength: nextLength,

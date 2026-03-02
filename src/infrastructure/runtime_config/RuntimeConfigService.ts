@@ -15,6 +15,7 @@ import { supabase } from '../supabase/SupabaseClient.js';
 import { logger } from '../../platform/logger.js';
 import type { AIChannelConfig, TierMappingConfig } from '../../types/config.js';
 import { RuntimeConfigSchema } from './RuntimeConfigSchema.js';
+import type { StreamScheduleConfig } from '../../features/chat/rules/streamingSchedule.js';
 
 const COMPONENT = 'RuntimeConfig';
 const REDIS_KEY_PREFIX = 'runtime_config';
@@ -310,6 +311,25 @@ export class RuntimeConfigService {
     /** 获取 Bot 启动欢迎语 */
     async getWelcomeMessage(): Promise<string> {
         return this.get<string>('welcome_message', config.telegram.welcome_message);
+    }
+
+    /** 获取流式首次上屏字符数 */
+    async getStreamingFirstUpdateChars(): Promise<number> {
+        return this.get<number>('streaming_first_update_chars', config.streaming.firstUpdateChars);
+    }
+
+    /** 获取流式常规上屏间隔（秒） */
+    async getStreamingRegularUpdateIntervalSec(): Promise<number> {
+        return this.get<number>('streaming_regular_update_interval_sec', config.streaming.regularUpdateIntervalSec);
+    }
+
+    /** 获取流式上屏调度配置（聚合） */
+    async getStreamScheduleConfig(): Promise<StreamScheduleConfig> {
+        const [firstUpdateChars, regularUpdateIntervalSec] = await Promise.all([
+            this.getStreamingFirstUpdateChars(),
+            this.getStreamingRegularUpdateIntervalSec(),
+        ]);
+        return { firstUpdateChars, regularUpdateIntervalSec };
     }
 
     // =============================================

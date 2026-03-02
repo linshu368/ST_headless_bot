@@ -161,21 +161,13 @@ INSERT INTO runtime_config (key, value, description) VALUES (
     '默认角色 ID（无角色信息时使用）'
 ) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
 
--- 6. 流式生成分块间隔超时（ms）
-INSERT INTO runtime_config (key, value, description) VALUES (
+-- 6. 删除全局流式超时配置（恢复从 config.ts 读取）
+DELETE FROM runtime_config WHERE key IN (
     'ai_stream_inter_chunk_timeout',
-    '3000'::jsonb,
-    '流式输出分块间隔超时（毫秒）'
-) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
+    'ai_stream_total_timeout'
+);
 
--- 7. 流式生成总超时（ms）
-INSERT INTO runtime_config (key, value, description) VALUES (
-    'ai_stream_total_timeout',
-    '15000'::jsonb,
-    '流式生成总超时（毫秒）'
-) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
-
--- 8. 增强系统指令 (system_instructions)
+-- 7. 增强系统指令 (system_instructions)
 INSERT INTO runtime_config (key, value, description) VALUES (
     'system_instructions',
     to_jsonb($si$Roleplay System Instructions
@@ -227,4 +219,18 @@ INSERT INTO runtime_config (key, value, description) VALUES (
 
 📚 点击下方按钮选择各种角色$wm$::text),
     'Bot /start 欢迎语'
+) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
+
+-- 10. 流式首次上屏字符数
+INSERT INTO runtime_config (key, value, description) VALUES (
+    'streaming_first_update_chars',
+    '5'::jsonb,
+    '流式上屏：累积多少字符后触发首次 UI 更新（默认 5）'
+) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
+
+-- 11. 流式常规上屏间隔（秒）
+INSERT INTO runtime_config (key, value, description) VALUES (
+    'streaming_regular_update_interval_sec',
+    '2'::jsonb,
+    '流式上屏：首次更新后，每隔多少秒刷新一次 UI（默认 2）'
 ) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;

@@ -2,6 +2,7 @@ import { SessionManager, type OpenAIMessage } from '../../session/usecases/Sessi
 import {
     applyStreamChar,
     createInitialStreamScheduleState,
+    type StreamScheduleConfig,
 } from '../rules/streamingSchedule.js';
 import { logger } from '../../../platform/logger.js';
 import config from '../../../platform/config.js';
@@ -328,7 +329,7 @@ export class SimpleChat {
 
         // Parallel: loadContext + all config lookups
         // (was 6+ sequential Redis calls → 1 parallel round)
-        const [, userMode, aiConfigSource, systemInstructions, interChunkMs] = await Promise.all([
+        const [, userMode, aiConfigSource, systemInstructions, interChunkMs, streamScheduleConfig] = await Promise.all([
             session.engine.loadContext({
                 characters: [session.character],
                 chat: engineContext
@@ -337,13 +338,14 @@ export class SimpleChat {
             runtimeConfig.getAIConfigSource(),
             runtimeConfig.getSystemInstructions(),
             config.timeouts.interChunk,
+            runtimeConfig.getStreamScheduleConfig(),
         ]);
         timer?.mark('context_loaded');
         logger.debug({
             kind: 'biz',
             component: COMPONENT,
             message: 'Stream timeout config resolved',
-            meta: { interChunkMs, source: 'config.ts' },
+            meta: { interChunkMs, streamScheduleConfig, source: 'runtime_config' },
         });
 
         const startedAtMs = Date.now();
@@ -397,7 +399,7 @@ export class SimpleChat {
                 for (const ch of chunk) {
                     accumulatedText += ch;
                     const nowMs = Date.now();
-                    const { nextState, decision } = applyStreamChar(scheduleState, nowMs);
+                    const { nextState, decision } = applyStreamChar(scheduleState, nowMs, streamScheduleConfig);
                     scheduleState = nextState;
 
                     if (decision?.shouldUpdate && accumulatedText !== lastSentText) {
