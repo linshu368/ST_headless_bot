@@ -313,6 +313,21 @@ export class RuntimeConfigService {
         return this.get<string>('welcome_message', config.telegram.welcome_message);
     }
 
+    /** 获取运维 Prompt：commit_process_diff */
+    async getOpsPromptCommitProcessDiff(fallback: string): Promise<string> {
+        return this.get<string>('ops_prompt_commit_process_diff', fallback);
+    }
+
+    /** 获取运维 Prompt：项目架构说明 */
+    async getOpsPromptProjectArch(fallback: string): Promise<string> {
+        return this.get<string>('ops_prompt_project_arch', fallback);
+    }
+
+    /** 获取运维 Prompt：项目原则说明 */
+    async getOpsPromptProjectPrinciple(fallback: string): Promise<string> {
+        return this.get<string>('ops_prompt_project_principle', fallback);
+    }
+
     /** 获取流式首次上屏字符数 */
     async getStreamingFirstUpdateChars(): Promise<number> {
         return this.get<number>('streaming_first_update_chars', config.streaming.firstUpdateChars);

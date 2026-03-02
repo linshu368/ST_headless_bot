@@ -27,6 +27,9 @@ export class GptCaller {
     private model: string;
     private timeout: number;
     private agent?: any;
+    private apiKeySource: string;
+    private apiUrlSource: string;
+    private modelSource: string;
 
     constructor(options: GptCallerOptions = {}) {
         this.apiKey = process.env.OPENAI_API_KEY || '';
@@ -35,6 +38,13 @@ export class GptCaller {
         this.model = options.model || process.env.OPENAI_MODEL || 'google/gemini-3-flash-preview';
         this.timeout = options.timeout || 60000;
         this.agent = createProxyAgentFromTelegramEnv();
+        this.apiKeySource = this.apiKey ? 'env:OPENAI_API_KEY' : 'missing';
+        this.apiUrlSource = this.apiUrl ? 'env:OPENAI_API_URL' : 'missing';
+        this.modelSource = options.model
+            ? 'options.model'
+            : process.env.OPENAI_MODEL
+                ? 'env:OPENAI_MODEL'
+                : 'default:google/gemini-3-flash-preview';
 
         if (!this.apiKey) {
             throw new Error('OPENAI_API_KEY 未找到！请检查 .env 文件');
@@ -45,6 +55,9 @@ export class GptCaller {
      * 发送 prompt 并获取 GPT 响应
      */
     async getResponse(prompt: string): Promise<string> {
+        const preview = prompt.slice(0, 50);
+        console.error('[GPT Config] apiKeySource=%s apiUrlSource=%s modelSource=%s model=%s', this.apiKeySource, this.apiUrlSource, this.modelSource, this.model);
+        console.error('[GPT Prompt] preview(50)=%s', preview);
         const headers = {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'

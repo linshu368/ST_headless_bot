@@ -116,7 +116,7 @@ async function main() {
     console.error('正在生成工程视角总结...');
     let message: string;
     try {
-        const prompt = renderPushLogPrompt(diffContent);
+        const prompt = await renderPushLogPrompt(diffContent);
         message = await gpt.getResponse(prompt);
         console.error('工程视角总结生成成功!');
     } catch (error: any) {

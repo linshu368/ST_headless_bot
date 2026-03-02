@@ -43,7 +43,7 @@ async function main() {
     const diffContent = fs.readFileSync(diffFile, 'utf-8');
 
     // 构建 prompt
-    const prompt = renderCommitPrompt(diffContent);
+    const prompt = await renderCommitPrompt(diffContent);
 
     // 调用 GPT
     const gpt = new GptCaller();

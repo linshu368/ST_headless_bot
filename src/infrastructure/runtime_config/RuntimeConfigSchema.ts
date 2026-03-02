@@ -143,7 +143,10 @@ export const RuntimeConfigSchema = {
                 return { key: input.key, value: value as T, version, updated_at };
             }
             case 'system_instructions':
-            case 'welcome_message': {
+            case 'welcome_message':
+            case 'ops_prompt_commit_process_diff':
+            case 'ops_prompt_project_arch':
+            case 'ops_prompt_project_principle': {
                 // 纯文本配置：只读 text_value
                 const value = requireTextValue(input.key, input.text_value);
                 return { key: input.key, value: value as T, version, updated_at };
