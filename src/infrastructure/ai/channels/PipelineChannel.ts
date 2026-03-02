@@ -206,9 +206,6 @@ export class PipelineChannel implements IAIChannel {
                 // Get timeouts from config/profile
                 const ttftMs = profile.firstchunk_timeout || 7000; // Default 7s if not set
                 const interChunkMs = interChunkDefaultMs || config.timeouts.interChunk;
-                if (!profile.total_timeout) {
-                    throw new Error(`Pipeline profile missing total_timeout: ${profile.id}`);
-                }
                 const totalMs = profile.total_timeout;
                 logger.debug({
                     kind: 'infra',

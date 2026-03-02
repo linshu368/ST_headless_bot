@@ -5,7 +5,7 @@ export interface AIProfileConfig {
     key: string;         // API Key
     model: string;       // 模型名称
     firstchunk_timeout?: number; // 首个 token 超时 (ms)
-    total_timeout?: number;      // 总超时 (ms)
+    total_timeout: number;       // 总超时 (ms)，必填
 }
 
 export interface InstructionRule {

@@ -94,9 +94,7 @@ const parseAIConfigSource = (value: unknown, key: string): AIConfigSourceData =>
             const firstchunk_timeout = stepRaw.firstchunk_timeout !== undefined
                 ? parseNumber('firstchunk_timeout', stepRaw.firstchunk_timeout, key)
                 : undefined;
-            const total_timeout = stepRaw.total_timeout !== undefined
-                ? parseNumber('total_timeout', stepRaw.total_timeout, key)
-                : undefined;
+            const total_timeout = parseNumber('total_timeout', stepRaw.total_timeout, key);
 
             return {
                 id,
