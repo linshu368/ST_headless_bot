@@ -12,5 +12,7 @@ export interface MessageLogRecord {
     full_response?: number; // seconds
     first_response_latency?: number; // seconds (time to first 5 chars)
     trace_id?: string; // links to engineering logs for root-cause analysis
-    // timestamp and id are handled by DB
+    session_id?: string;
+    accept_at?: string; // ISO 8601 – when the bot received the user message
+    // id and created_at are handled by DB
 }

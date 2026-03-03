@@ -474,7 +474,9 @@ export class SimpleChat {
                 round: session.round + 1,
                 full_response: (Date.now() - startedAtMs) / 1000,
                 first_response_latency: firstResponseMs ? firstResponseMs / 1000 : undefined,
-                trace_id: getTraceId()
+                trace_id: getTraceId(),
+                session_id: session.sessionId,
+                accept_at: new Date(processingStartTime).toISOString(),
             }).then(messageId => {
                 if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
                     this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {
