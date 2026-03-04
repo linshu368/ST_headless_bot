@@ -31,6 +31,7 @@ const LOCK_WAIT_RETRIES = 5;
 export interface AIConfigSourceData {
     channels: AIChannelConfig;
     tier_mapping: TierMappingConfig;
+    tier_costs?: Record<string, number>;
 }
 
 interface UpstashResponse {
@@ -315,6 +316,11 @@ export class RuntimeConfigService {
     /** 获取 Bot 启动欢迎语 */
     async getWelcomeMessage(): Promise<string> {
         return this.get<string>('welcome_message', config.telegram.welcome_message);
+    }
+
+    /** 获取积分不足提示文案 */
+    async getInsufficientCreditsMessage(): Promise<string> {
+        return this.get<string>('insufficient_credits_message', '星尘不足啦，唤醒更多星尘，让故事继续......');
     }
 
     /** 获取流式首次上屏字符数 */

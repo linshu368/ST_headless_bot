@@ -358,7 +358,7 @@ export class SimpleChat {
         if (creditBalance !== null) {
             const checkTier = resolveTierFromMode(userMode);
             const totalBalance = getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits);
-            if (!hasEnoughCredits(totalBalance, checkTier)) {
+            if (!hasEnoughCredits(totalBalance, checkTier, aiConfigSource.tier_costs)) {
                 throw new InsufficientCreditsError(totalBalance);
             }
         }
@@ -506,7 +506,7 @@ export class SimpleChat {
             // 三个条件缺一不可：有回复内容 + LLM 自然完成 + 积分系统已注入
             if (executionTrace.streamCompleted && this.creditsRepository) {
                 const deductTier = resolveTierFromMode(userMode);
-                const cost = getCostForTier(deductTier);
+                const cost = getCostForTier(deductTier, aiConfigSource.tier_costs);
                 this.creditsRepository.deductCredits(userId, cost).then(ok => {
                     if (ok) {
                         logger.info({ kind: 'biz', component: COMPONENT,

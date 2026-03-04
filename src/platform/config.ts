@@ -48,7 +48,7 @@ export interface Config {
     ai_config_source: {
         channels: AIChannelConfig;
         tier_mapping: TierMappingConfig;
-        // instructions: Removed as logic is simplified to single system_instruction
+        tier_costs: Record<string, number>;
     };
     timeouts: {
         interChunk: number;
@@ -218,6 +218,13 @@ const config: Config = {
             'tier_2': 'channel_2',
             'tier_3': 'channel_3',
             'tier_4': 'channel_3'
+        },
+        // 3. 费率表 (Fallback: 正式数据在 Supabase runtime_config.ai_config_source.tier_costs)
+        tier_costs: {
+            'tier_1': 5,
+            'tier_2': 10,
+            'tier_3': 12,
+            'tier_4': 28,
         },
     }
 };

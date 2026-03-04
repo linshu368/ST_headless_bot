@@ -286,7 +286,8 @@ export class TelegramBotAdapter {
 
             } catch (error) {
                 if (error instanceof InsufficientCreditsError && placeholder) {
-                    await this.bot.editMessageText("星尘不足，请充值后继续对话", {
+                    const creditsMsg = await runtimeConfig.getInsufficientCreditsMessage();
+                    await this.bot.editMessageText(creditsMsg, {
                         chat_id: msg.chat.id,
                         message_id: placeholder.message_id,
                         reply_markup: UIHandler.createRechargeKeyboard()
@@ -656,7 +657,8 @@ export class TelegramBotAdapter {
                         }
                     } catch (error) {
                          if (error instanceof InsufficientCreditsError) {
-                            await this.bot.editMessageText("星尘不足，请充值后继续对话", {
+                            const creditsMsg = await runtimeConfig.getInsufficientCreditsMessage();
+                            await this.bot.editMessageText(creditsMsg, {
                                 chat_id: chatId,
                                 message_id: placeholder.message_id,
                                 reply_markup: UIHandler.createRechargeKeyboard()

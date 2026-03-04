@@ -113,7 +113,26 @@ const parseAIConfigSource = (value: unknown, key: string): AIConfigSourceData =>
         tier_mapping[tier] = requireString(`tier_mapping.${tier}`, channelId, key);
     }
 
-    return { channels, tier_mapping };
+    // tier_costs: optional Record<string, number>, fallback handled by caller
+    let tier_costs: Record<string, number> | undefined;
+    const costsRaw = value.tier_costs;
+    if (costsRaw !== undefined && costsRaw !== null) {
+        if (!isRecord(costsRaw)) {
+            throw new Error(`RuntimeConfigSchema: ${key}.tier_costs must be an object`);
+        }
+        tier_costs = {};
+        for (const [tier, cost] of Object.entries(costsRaw)) {
+            tier_costs[tier] = parseNumber(`tier_costs.${tier}`, cost, key);
+        }
+        // Cross-validation: every tier in tier_mapping must have a cost entry
+        for (const tier of Object.keys(tier_mapping)) {
+            if (!(tier in tier_costs)) {
+                throw new Error(`RuntimeConfigSchema: ${key}.tier_costs missing entry for "${tier}"`);
+            }
+        }
+    }
+
+    return { channels, tier_mapping, tier_costs };
 };
 
 export const RuntimeConfigSchema = {
@@ -142,6 +161,7 @@ export const RuntimeConfigSchema = {
             }
             case 'system_instructions':
             case 'welcome_message':
+            case 'insufficient_credits_message':
             case 'ops_prompt_commit_process_diff':
             case 'ops_prompt_project_arch':
             case 'ops_prompt_project_principle': {

@@ -5,7 +5,7 @@
 
 import { ModelTier } from '../../chat/domain/ModelStrategy.js';
 
-// ============ 费率表 ============
+// ============ 费率表（静态 fallback，运行时由 ai_config_source.tier_costs 覆盖） ============
 
 const TIER_COST: Record<ModelTier, number> = {
     [ModelTier.TIER_1]: 5,
@@ -16,8 +16,11 @@ const TIER_COST: Record<ModelTier, number> = {
 
 // ============ 纯函数 ============
 
-/** 查询指定模型等级的单次对话扣费额 */
-export function getCostForTier(tier: ModelTier): number {
+/** 查询指定模型等级的单次对话扣费额；传入动态费率表时优先使用 */
+export function getCostForTier(tier: ModelTier, dynamicCosts?: Record<string, number>): number {
+    if (dynamicCosts && tier in dynamicCosts) {
+        return dynamicCosts[tier];
+    }
     return TIER_COST[tier] ?? TIER_COST[ModelTier.TIER_3];
 }
 
@@ -31,8 +34,8 @@ export function getTotalBalance(bonusCredits: number, mainCredits: number): numb
 }
 
 /** 判断总余额是否足够支付一次指定等级的对话 */
-export function hasEnoughCredits(totalBalance: number, tier: ModelTier): boolean {
-    return totalBalance >= getCostForTier(tier);
+export function hasEnoughCredits(totalBalance: number, tier: ModelTier, dynamicCosts?: Record<string, number>): boolean {
+    return totalBalance >= getCostForTier(tier, dynamicCosts);
 }
 
 // ============ 类型化错误 ============
