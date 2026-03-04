@@ -335,8 +335,7 @@ export class TelegramBotAdapter {
                     // 1. 发送欢迎语 + 底部按钮 (从 RuntimeConfig 动态获取)
                     const welcomeMessage = await runtimeConfig.getWelcomeMessage();
                     await this.bot.sendMessage(chatId, welcomeMessage, {
-                        parse_mode: 'Markdown', // 确保 config 中的文案支持 Markdown
-                        reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl)
+                        reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl),
                     });
 
                     // 2. 获取当前会话（包含默认角色）
