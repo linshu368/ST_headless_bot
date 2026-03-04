@@ -14,6 +14,8 @@ import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 import { PipelineChannel } from '../../../infrastructure/ai/channels/PipelineChannel.js';
 import { getTraceId } from '../../../platform/tracing.js';
+import type { ICreditsRepository } from '../../credits/ports/ICreditsRepository.js';
+import { getCostForTier, getTotalBalance, hasEnoughCredits, InsufficientCreditsError } from '../../credits/rules/creditCost.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -29,11 +31,13 @@ export class SimpleChat {
     private sessionManager: SessionManager;
     private channelRegistry: IChannelRegistry;
     private messageRepository: IMessageRepository;
+    private creditsRepository: ICreditsRepository | null;
 
-    constructor(sessionManager: SessionManager, channelRegistry: IChannelRegistry, messageRepository: IMessageRepository) {
+    constructor(sessionManager: SessionManager, channelRegistry: IChannelRegistry, messageRepository: IMessageRepository, creditsRepository?: ICreditsRepository) {
         this.sessionManager = sessionManager;
         this.channelRegistry = channelRegistry;
         this.messageRepository = messageRepository;
+        this.creditsRepository = creditsRepository ?? null;
     }
     
     /**
@@ -277,7 +281,8 @@ export class SimpleChat {
             provider: null as string | null,
             finalContext: null as any,
             generation_id: null as string | null,
-            apiKey: null as string | null
+            apiKey: null as string | null,
+            streamCompleted: false,
         };
 
         const previewHistory = (history: OpenAIMessage[], limit = 3) => {
@@ -327,9 +332,9 @@ export class SimpleChat {
             }
         }
 
-        // Parallel: loadContext + all config lookups
-        // (was 6+ sequential Redis calls → 1 parallel round)
-        const [, userMode, aiConfigSource, systemInstructions, interChunkMs, streamScheduleConfig] = await Promise.all([
+        // Parallel: loadContext + all config lookups + credit balance
+        // (was 6+ sequential Redis calls → 1 parallel round; credit query 搭车, 零增量延迟)
+        const [, userMode, aiConfigSource, systemInstructions, interChunkMs, streamScheduleConfig, creditBalance] = await Promise.all([
             session.engine.loadContext({
                 characters: [session.character],
                 chat: engineContext
@@ -339,6 +344,7 @@ export class SimpleChat {
             runtimeConfig.getSystemInstructions(),
             config.timeouts.interChunk,
             runtimeConfig.getStreamScheduleConfig(),
+            this.creditsRepository?.getBalance(userId).catch(() => null) ?? Promise.resolve(null),
         ]);
         timer?.mark('context_loaded');
         logger.debug({
@@ -347,6 +353,15 @@ export class SimpleChat {
             message: 'Stream timeout config resolved',
             meta: { interChunkMs, streamScheduleConfig, source: 'runtime_config' },
         });
+
+        // Credit pre-check: creditBalance === null 表示积分系统不可用 → 放行
+        if (creditBalance !== null) {
+            const checkTier = resolveTierFromMode(userMode);
+            const totalBalance = getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits);
+            if (!hasEnoughCredits(totalBalance, checkTier)) {
+                throw new InsufficientCreditsError(totalBalance);
+            }
+        }
 
         const startedAtMs = Date.now();
         let firstResponseMs: number | undefined;
@@ -486,6 +501,31 @@ export class SimpleChat {
             }).catch(err => {
                 logger.error({ kind: 'infra', component: COMPONENT, message: 'Message persistence failed', error: err });
             });
+
+            // Credit deduction (Fire-and-Forget, 不堵塞响应路径)
+            // 三个条件缺一不可：有回复内容 + LLM 自然完成 + 积分系统已注入
+            if (executionTrace.streamCompleted && this.creditsRepository) {
+                const deductTier = resolveTierFromMode(userMode);
+                const cost = getCostForTier(deductTier);
+                this.creditsRepository.deductCredits(userId, cost).then(ok => {
+                    if (ok) {
+                        logger.info({ kind: 'biz', component: COMPONENT,
+                            message: 'Credits deducted',
+                            meta: { userId, cost, tier: deductTier, model: executionTrace.model } });
+                    } else {
+                        logger.warn({ kind: 'biz', component: COMPONENT,
+                            message: 'Credit deduction returned false',
+                            meta: { userId, cost } });
+                    }
+                }).catch(err => {
+                    logger.error({ kind: 'infra', component: COMPONENT,
+                        message: 'Credit deduction exception', error: err });
+                });
+            } else if (!executionTrace.streamCompleted) {
+                logger.info({ kind: 'biz', component: COMPONENT,
+                    message: 'Skipping credit deduction (stream not naturally completed)',
+                    meta: { userId, streamCompleted: executionTrace.streamCompleted } });
+            }
         } else {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Streaming returned empty' });
         }

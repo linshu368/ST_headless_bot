@@ -33,6 +33,14 @@ export class UIHandler {
         };
     }
 
+    static createRechargeKeyboard(): TelegramBot.InlineKeyboardMarkup {
+        return {
+            inline_keyboard: [
+                [{ text: "💳 充值星尘", url: "https://example.com/recharge" }]
+            ]
+        };
+    }
+
     static getModelSelectionCaption(): string {
         return `
 ━━━━━━━━━━━━

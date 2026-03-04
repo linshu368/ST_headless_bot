@@ -12,6 +12,8 @@ import { generateTraceId, runWithTraceId, setUserId } from '../../platform/traci
 import { UIHandler } from './UIHandler.js';
 import { SupabaseUserRepository } from '../../infrastructure/repositories/SupabaseUserRepository.js';
 import { runtimeConfig } from '../../infrastructure/runtime_config/RuntimeConfigService.js';
+import { SupabaseCreditRepository } from '../../infrastructure/repositories/SupabaseCreditRepository.js';
+import { getTotalBalance, InsufficientCreditsError } from '../credits/rules/creditCost.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -28,6 +30,7 @@ export class TelegramBotAdapter {
     private simpleChat: SimpleChat;
     private sessionManager: SessionManager; // Add SessionManager
     private userRepository: SupabaseUserRepository;
+    private creditsRepository: SupabaseCreditRepository | null;
     private isPolling: boolean = false;
     private processedMessageIds: Set<number> = new Set();
     private readonly MAX_PROCESSED_IDS = 1000;
@@ -75,8 +78,10 @@ export class TelegramBotAdapter {
         this.sessionManager = new SessionManager();
         const channelRegistry = new ChannelRegistry();
         const messageRepository = new SupabaseMessageRepository();
-        this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository);
+        const creditsRepository = new SupabaseCreditRepository();
+        this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository, creditsRepository);
         this.userRepository = new SupabaseUserRepository();
+        this.creditsRepository = creditsRepository;
     }
 
     /**
@@ -224,11 +229,12 @@ export class TelegramBotAdapter {
             this.activeChats.set(chatId, Date.now());
             const startTime = Date.now();
             const timer = new RequestTimer();
+            let placeholder: TelegramBot.Message | null = null;
             try {
                 // 发送 "typing" 状态，提升用户体验
                 this.bot.sendChatAction(msg.chat.id, 'typing');
 
-                const placeholder = await this.bot.sendMessage(msg.chat.id, '✍️输入中...');
+                placeholder = await this.bot.sendMessage(msg.chat.id, '✍️输入中...');
                 timer.mark('placeholder_sent');
                 let lastText = '';
                 let isFirstEdit = true;
@@ -279,6 +285,15 @@ export class TelegramBotAdapter {
                 }
 
             } catch (error) {
+                if (error instanceof InsufficientCreditsError && placeholder) {
+                    await this.bot.editMessageText("星尘不足，请充值后继续对话", {
+                        chat_id: msg.chat.id,
+                        message_id: placeholder.message_id,
+                        reply_markup: UIHandler.createRechargeKeyboard()
+                    });
+                    logger.info({ kind: 'biz', component: COMPONENT, message: 'Insufficient credits (chat)', meta: { chatId } });
+                    return;
+                }
                 // 关键：完整暴露错误信息
                 logger.error({ 
                     kind: 'sys', 
@@ -493,7 +508,10 @@ export class TelegramBotAdapter {
     }
 
     private async _handleSettings(chatId: string): Promise<void> {
-        const currentMode = await this.sessionManager.getUserModelMode(chatId);
+        const [currentMode, creditBalance] = await Promise.all([
+            this.sessionManager.getUserModelMode(chatId),
+            this.creditsRepository?.getBalance(chatId).catch(() => null) ?? Promise.resolve(null),
+        ]);
         
         let modeText = "🎦 旗舰模型 (默认)";
         if (currentMode === ModelTier.TIER_1) modeText = "🍔 快餐模型";
@@ -501,7 +519,11 @@ export class TelegramBotAdapter {
         if (currentMode === ModelTier.TIER_3) modeText = "🎦 旗舰模型";
         if (currentMode === ModelTier.TIER_4) modeText = "💎 尊享模型";
 
-        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
+        const totalCredits = creditBalance
+            ? getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits)
+            : null;
+        const balanceText = totalCredits === null ? '当前拥有星尘：--' : `当前拥有星尘：${totalCredits}`;
+        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
         
         await this.bot.sendMessage(chatId, text, {
             parse_mode: 'Markdown',
@@ -633,6 +655,16 @@ export class TelegramBotAdapter {
                             });
                         }
                     } catch (error) {
+                         if (error instanceof InsufficientCreditsError) {
+                            await this.bot.editMessageText("星尘不足，请充值后继续对话", {
+                                chat_id: chatId,
+                                message_id: placeholder.message_id,
+                                reply_markup: UIHandler.createRechargeKeyboard()
+                            });
+                            logger.info({ kind: 'biz', component: COMPONENT, message: 'Insufficient credits (regenerate)', meta: { chatId } });
+                            await this.bot.answerCallbackQuery(query.id).catch(() => {});
+                            break;
+                        }
                          logger.error({ kind: 'biz', component: COMPONENT, message: 'Regenerate flow failed', error });
                          // Prevent secondary error if network is down
                          await this.bot.editMessageText("重新生成遇到错误，请稍后再试。", {
@@ -757,7 +789,12 @@ export class TelegramBotAdapter {
         if (currentMode === ModelTier.TIER_3) modeText = "🎦 旗舰模型";
         if (currentMode === ModelTier.TIER_4) modeText = "💎 尊享模型";
 
-        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**`;
+        const creditBalance = await this.creditsRepository?.getBalance(chatId).catch(() => null) ?? null;
+        const totalCredits = creditBalance
+            ? getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits)
+            : null;
+        const balanceText = totalCredits === null ? '当前拥有星尘：--' : `当前拥有星尘：${totalCredits}`;
+        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
 
         await this.bot.editMessageText(text, {
             chat_id: chatId,

@@ -65,6 +65,7 @@ export class PipelineChannel implements IAIChannel {
                     clearTimeout(timer!);
 
                     if (result.done) {
+                        meta.streamCompleted = true;
                         break;
                     }
 
@@ -225,12 +226,17 @@ export class PipelineChannel implements IAIChannel {
                     },
                 });
 
+                const stepMeta: Record<string, any> = {
+                    pipelineId: this.pipelineId,
+                    profileId: profile.id,
+                    streamCompleted: false,
+                };
                 const managed = this.managedStream(
                     rawStream, 
                     ttftMs, 
                     interChunkMs, 
                     totalMs,
-                    { pipelineId: this.pipelineId, profileId: profile.id }
+                    stepMeta
                 );
 
                 let hasYielded = false;
@@ -255,9 +261,9 @@ export class PipelineChannel implements IAIChannel {
                     if (context && context.trace) {
                         context.trace.model = profile.model;
                         context.trace.attempt = i + 1;
-                        //这里的provider不确定是用于记录那个字段，如果是供应啥元数据则不需要，可以删掉
                         context.trace.provider = profile.provider || 'unknown';
-                        context.trace.apiKey = profile.key; // Capture API Key for backfill
+                        context.trace.apiKey = profile.key;
+                        context.trace.streamCompleted = !!stepMeta.streamCompleted;
                     }
 
                     return;
