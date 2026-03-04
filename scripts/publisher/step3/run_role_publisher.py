@@ -325,18 +325,20 @@ async def main() -> None:
     async with client:
         print("🚀 角色发布脚本启动")
 
-        while True:
-            try:
-                wait_seconds = seconds_until_next_run(9, 30)
-                next_run_time = datetime.now() + timedelta(seconds=wait_seconds)
-                print(f"⏰ 下次自动发布: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}（本地时间）")
-                await asyncio.sleep(wait_seconds)
-
-                await run_daily_publish(client, channel, supabase)
-            except Exception as e:
-                print(f"❌ 每日发布任务出错: {e}")
-                print(f"⏰ 等待 {RETRY_INTERVAL_MINUTES} 分钟后重试...")
-                await asyncio.sleep(RETRY_INTERVAL_MINUTES * 60)
+        # NOTE: 暂时去掉定时发送逻辑，仅手动运行一次发布任务。
+        # while True:
+        #     try:
+        #         wait_seconds = seconds_until_next_run(9, 30)
+        #         next_run_time = datetime.now() + timedelta(seconds=wait_seconds)
+        #         print(f"⏰ 下次自动发布: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}（本地时间）")
+        #         await asyncio.sleep(wait_seconds)
+        #
+        #         await run_daily_publish(client, channel, supabase)
+        #     except Exception as e:
+        #         print(f"❌ 每日发布任务出错: {e}")
+        #         print(f"⏰ 等待 {RETRY_INTERVAL_MINUTES} 分钟后重试...")
+        #         await asyncio.sleep(RETRY_INTERVAL_MINUTES * 60)
+        await run_daily_publish(client, channel, supabase)
 
 if __name__ == "__main__":
     asyncio.run(main())
