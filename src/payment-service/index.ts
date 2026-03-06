@@ -221,7 +221,7 @@ app.use((_req: Request, res: Response) => {
 });
 
 // 启动服务
-const port = parseInt(process.env.PAYMENT_PORT || '3000', 10);
+const port = parseInt(process.env.PORT || process.env.PAYMENT_PORT || '3000', 10);
 
 app.listen(port, () => {
     logger.info({
