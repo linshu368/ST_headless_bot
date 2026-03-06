@@ -139,7 +139,7 @@ ${method?.description || ''}
         const methodName = paymentType ? PaymentUIHandler.getPaymentMethodName(paymentType) : '';
 
         if (status === 'expired') {
-            return `超时未支付，本次订单（订单号：\`${orderId}\`）已取消`;
+            return `超时未支付，本次订单\`${orderId}\`已取消`;
         }
 
         if (status === 'pending') {
