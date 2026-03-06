@@ -166,8 +166,16 @@ export class JLPaymentGateway {
                     message: 'Order query successful',
                     meta: { outTradeNo, status: result.status },
                 });
+
+                let status: 'paid' | 'pending' | 'expired' = 'pending';
+                if (result.status === '1') {
+                    status = 'paid';
+                } else if (this._isOrderExpired(outTradeNo)) {
+                    status = 'expired';
+                }
+
                 return {
-                    status: result.status === '1' ? 'paid' : 'pending',
+                    status,
                     amount: result.money,
                     paymentType: result.type,
                 };
@@ -192,9 +200,20 @@ export class JLPaymentGateway {
         }
     }
 
+    private static readonly ORDER_EXPIRE_MS = 15 * 60 * 1000;
+
     /**
-     * 获取商户ID
+     * 根据订单号中的时间戳判断是否已超过 15 分钟
+     * 订单号格式: TG_{userId}_{timestamp}_{random}
      */
+    private _isOrderExpired(outTradeNo: string): boolean {
+        const parts = outTradeNo.split('_');
+        if (parts.length < 3) return false;
+        const ts = parseInt(parts[2], 10);
+        if (isNaN(ts)) return false;
+        return Date.now() - ts > JLPaymentGateway.ORDER_EXPIRE_MS;
+    }
+
     getMerchantId(): string {
         return this.merchantId;
     }

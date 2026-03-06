@@ -852,6 +852,14 @@ export class TelegramBotAdapter {
                     break;
 
                 // ========== 支付相关回调 ==========
+                case 'pay_recharge':
+                    if (query.message?.message_id) {
+                        await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                    }
+                    await this._handleRechargeMenu(chatId);
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
                 case 'pay_method':
                     await this._handlePaymentMethodSelect(chatId, params[0] as PaymentType, query);
                     break;
@@ -1015,20 +1023,15 @@ export class TelegramBotAdapter {
         }
 
         const result = await this.rechargeUseCase.queryOrderStatus(orderId);
-
-        await this.bot.answerCallbackQuery(query.id, {
-            text: result.status === 'paid' ? '✅ 已支付' : '⏳ 等待支付'
-        });
+        await this.bot.answerCallbackQuery(query.id);
 
         if (result.status === 'paid' && result.amount) {
-            // 从订单号中提取支付方式（callback_data 格式为 pay_check:{orderId}，无法携带 paymentType）
-            // 此处使用 queryOrder 返回的 paymentType，若无则用 unknown
             await this._handlePaymentSuccessInternal(
                 chatId, result.amount, orderId, result.paymentType || 'unknown'
             );
-        } else if (result.status === 'paid') {
+        } else {
             await this.bot.sendMessage(chatId,
-                PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.amount),
+                PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.paymentType, result.amount),
                 { parse_mode: 'Markdown' }
             );
         }

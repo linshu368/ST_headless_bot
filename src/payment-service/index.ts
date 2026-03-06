@@ -89,24 +89,41 @@ app.post('/payment/notify', async (req: Request, res: Response) => {
                 return;
             }
 
-            // 3. 转发给 Bot Service 处理业务逻辑
+            // 3. 转发给 Bot Service 处理业务逻辑（含重试）
             const event: InternalPaymentEvent = { userId, orderId, amount, paymentType };
+            const MAX_ATTEMPTS = 3;
+            let forwarded = false;
 
-            try {
-                await axios.post(`${botServiceUrl}/internal/payment-callback`, event, {
-                    timeout: 10000,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-                logger.info({
-                    kind: 'biz', component: COMPONENT,
-                    message: 'Payment event forwarded to Bot Service',
-                    meta: { traceId, userId, orderId }
-                });
-            } catch (forwardError) {
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    await axios.post(`${botServiceUrl}/internal/payment-callback`, event, {
+                        timeout: 10000,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                    logger.info({
+                        kind: 'biz', component: COMPONENT,
+                        message: 'Payment event forwarded to Bot Service',
+                        meta: { traceId, userId, orderId, attempt }
+                    });
+                    forwarded = true;
+                    break;
+                } catch (forwardError) {
+                    logger.error({
+                        kind: 'sys', component: COMPONENT,
+                        message: `Forward attempt ${attempt}/${MAX_ATTEMPTS} failed`,
+                        error: forwardError, meta: { traceId, userId, orderId }
+                    });
+                    if (attempt < MAX_ATTEMPTS) {
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+                }
+            }
+
+            if (!forwarded) {
                 logger.error({
                     kind: 'sys', component: COMPONENT,
-                    message: 'Failed to forward payment event to Bot Service',
-                    error: forwardError, meta: { traceId, userId, orderId }
+                    message: 'All forward attempts exhausted, payment event lost',
+                    meta: { traceId, userId, orderId, amount, paymentType }
                 });
             }
         }

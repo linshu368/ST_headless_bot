@@ -4,7 +4,7 @@
  */
 
 /** 支付方式代码 */
-export type PaymentType = 'alipay' | 'wxpay' | 'usdt';
+export type PaymentType = 'alipay' | 'wxpay';
 
 /** 支付方式配置 */
 export interface PaymentMethodConfig {
@@ -19,7 +19,6 @@ export interface PaymentMethodConfig {
 export const PAYMENT_METHODS: PaymentMethodConfig[] = [
     { code: 'alipay', name: '支付宝', icon: '💳', description: '支付宝扫码支付', device: 'jump' },
     { code: 'wxpay', name: '微信支付', icon: '💚', description: '微信扫码支付', device: 'jump' },
-    { code: 'usdt', name: 'USDT', icon: '🔵', description: 'USDT(TRC20)支付', device: 'mobile' }
 ];
 
 /** 创建支付订单参数 */
@@ -53,7 +52,7 @@ export interface PaymentNotifyData {
 
 /** 订单查询结果 */
 export interface OrderQueryResult {
-    status: 'paid' | 'pending' | 'failed';
+    status: 'paid' | 'pending' | 'expired' | 'failed';
     amount?: string;
     paymentType?: string;
 }

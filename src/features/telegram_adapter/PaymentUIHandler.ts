@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
-import { RECHARGE_AMOUNTS, getRechargeDescription } from '../payment/domain/rechargeRules.js';
+import { RECHARGE_AMOUNTS } from '../payment/domain/rechargeRules.js';
 
 /**
  * 支付 UI 处理器 (Layer 1)
@@ -49,7 +49,7 @@ export class PaymentUIHandler {
                 [{ text: '💳 立即支付', url: paymentUrl }],
                 [
                     { text: '📋 查看状态', callback_data: `pay_check:${orderId}` },
-                    { text: '🔄 其他方式', callback_data: 'pay_back' }
+                    { text: '🔄 返回上一步', callback_data: 'pay_back' }
                 ]
             ]
         };
@@ -81,7 +81,6 @@ export class PaymentUIHandler {
 📌 **支持的支付方式：**
 💳 支付宝 - 扫码即付
 💚 微信支付 - 扫码即付
-🔵 USDT - 数字货币
 
 请选择支付方式：`;
     }
@@ -114,17 +113,17 @@ ${method?.description || ''}
         paymentType: PaymentType
     ): string {
         const methodName = PaymentUIHandler.getPaymentMethodName(paymentType);
-        const rechargeInfo = getRechargeDescription(amount);
 
         return `✅ **订单已创建**
 
-📋 订单号：\`${orderId}\`
-💰 充值金额：¥${amount}
-💳 支付方式：${methodName}
+订单将于15分钟后关闭哦~~
+--------------------------------------
+📋 订单信息：
+• 订单号：\`${orderId}\`
+• 充值金额：${amount}元
+• 支付方式：${methodName}
+--------------------------------------
 
-${rechargeInfo}
-
-⏰ 请在 15 分钟内完成支付
 点击下方按钮开始支付 ⬇️`;
     }
 
@@ -133,28 +132,31 @@ ${rechargeInfo}
      */
     static getOrderStatusMessage(
         orderId: string,
-        status: 'paid' | 'pending' | 'failed',
+        status: 'paid' | 'pending' | 'expired' | 'failed',
+        paymentType?: string,
         amount?: string
     ): string {
-        const statusMap = {
-            paid: '✅ 已支付',
-            pending: '⏳ 等待支付',
-            failed: '❌ 查询失败'
-        };
+        const methodName = paymentType ? PaymentUIHandler.getPaymentMethodName(paymentType) : '';
 
-        let message = `${statusMap[status]}\n\n`;
-        message += `📋 订单号：\`${orderId}\`\n`;
-
-        if (amount) {
-            message += `💰 金额：¥${amount}\n`;
+        if (status === 'expired') {
+            return `超时未支付，本次订单（订单号：\`${orderId}\`）已取消`;
         }
 
-        if (status === 'paid') {
-            message += `\n星尘已到账，感谢您的支持！`;
-        } else if (status === 'pending') {
-            message += `\n请完成支付后再次查询。`;
+        if (status === 'pending') {
+            return `⏳ 等待支付
+
+订单将于15分钟后关闭哦~~
+------------------------------------
+📋 订单信息：
+• 订单号：\`${orderId}\`${methodName ? `\n• 支付方式：${methodName}` : ''}${amount ? `\n• 支付金额：${amount}元` : ''}
+------------------------------------
+（如果客官已经支付完成，请稍等3分钟哦，后台正加紧为您补充星尘）`;
         }
 
-        return message;
+        if (status === 'failed') {
+            return `❌ 查询失败\n\n📋 订单号：\`${orderId}\`\n\n请稍后再试。`;
+        }
+
+        return '';
     }
 }
