@@ -43,6 +43,7 @@ const paymentGateway = new JLPaymentGateway({
 });
 
 const botServiceUrl = process.env.BOT_SERVICE_URL!;
+const telegramBotUsername = process.env.TELEGRAM_BOT_USERNAME || '';
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -208,7 +209,7 @@ app.get('/payment/return', (req: Request, res: Response) => {
         <p>您的支付正在处理中</p>
         <p>请返回 Telegram 查看充值结果</p>
         ${orderId ? `<div class="order-id">订单号: ${orderId}</div>` : ''}
-        <a href="https://t.me" class="btn">返回 Telegram</a>
+        <a href="https://t.me/${telegramBotUsername}" class="btn">返回 Telegram</a>
     </div>
 </body>
 </html>
