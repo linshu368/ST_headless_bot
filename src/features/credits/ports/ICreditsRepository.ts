@@ -24,4 +24,13 @@ export interface ICreditsRepository {
      * @returns true=扣减成功, false=余额不足或系统异常
      */
     deductCredits(userId: string, amount: number): Promise<boolean>;
+
+    /**
+     * 充值积分（支付成功后调用）
+     * @param userId 用户ID
+     * @param mainCredits 充值积分（计入 main_credits）
+     * @param bonusCredits 赠送积分（计入 bonus_credits）
+     * @returns true=充值成功, false=系统异常
+     */
+    addCredits(userId: string, mainCredits: number, bonusCredits: number): Promise<boolean>;
 }

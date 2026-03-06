@@ -81,4 +81,48 @@ export class SupabaseCreditRepository implements ICreditsRepository {
             return false;
         }
     }
+
+    async addCredits(userId: string, mainCredits: number, bonusCredits: number): Promise<boolean> {
+        if (!supabase) return false;
+
+        try {
+            const { data, error } = await supabase.rpc('add_credits', {
+                p_user_id: userId,
+                p_main_credits: mainCredits,
+                p_bonus_credits: bonusCredits,
+            });
+
+            if (error) {
+                logger.error({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'add_credits RPC failed',
+                    error,
+                    meta: { userId, mainCredits, bonusCredits },
+                });
+                return false;
+            }
+
+            // RPC 返回值可能是 boolean true 或字符串 "true"，统一处理
+            const success = data === true || data === 'true';
+
+            logger.info({
+                kind: 'infra',
+                component: COMPONENT,
+                message: success ? 'Credits added successfully' : 'add_credits RPC returned unexpected value',
+                meta: { userId, mainCredits, bonusCredits, result: data, resultType: typeof data },
+            });
+
+            return success;
+        } catch (err) {
+            logger.error({
+                kind: 'infra',
+                component: COMPONENT,
+                message: 'Exception during credit addition',
+                error: err,
+                meta: { userId, mainCredits, bonusCredits },
+            });
+            return false;
+        }
+    }
 }

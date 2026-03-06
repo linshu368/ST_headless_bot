@@ -61,6 +61,17 @@ export interface Config {
         firstUpdateChars: number;
         regularUpdateIntervalSec: number;
     };
+    payment: {
+        enabled: boolean;
+        merchantId: string;
+        merchantKey: string;
+        baseUrl: string;
+        notifyUrl: string;
+        returnUrl: string;
+        port: number;
+        internalApiPort: number;
+        botServiceUrl: string;
+    };
 }
 
 const config: Config = {
@@ -117,6 +128,17 @@ const config: Config = {
     streaming: {
         firstUpdateChars: Number(process.env.STREAMING_FIRST_UPDATE_CHARS || '5'),
         regularUpdateIntervalSec: Number(process.env.STREAMING_REGULAR_UPDATE_INTERVAL_SEC || '2'),
+    },
+    payment: {
+        enabled: process.env.PAYMENT_ENABLED === 'true',
+        merchantId: process.env.PAYMENT_MERCHANT_ID || '',
+        merchantKey: process.env.PAYMENT_MERCHANT_KEY || '',
+        baseUrl: process.env.PAYMENT_BASE_URL || 'http://jlusdt.com',
+        notifyUrl: process.env.PAYMENT_NOTIFY_URL || '',
+        returnUrl: process.env.PAYMENT_RETURN_URL || '',
+        port: Number(process.env.PAYMENT_PORT || '3000'),
+        internalApiPort: Number(process.env.INTERNAL_API_PORT || '3001'),
+        botServiceUrl: process.env.BOT_SERVICE_URL || 'http://localhost:3001',
     },
     // --- 运行时配置 (已迁移至 Supabase runtime_config 表) ---
     // 以下为静态 fallback 默认值，仅在 Supabase + Redis 均不可用时启用

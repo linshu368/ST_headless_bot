@@ -5,9 +5,9 @@ export class UIHandler {
     static createMainMenuKeyboard(): TelegramBot.ReplyKeyboardMarkup {
         return {
             keyboard: [
-                [{ text: "🎭 选择角色" }],
-                [{ text: "🗂 历史聊天" }],
-                [{ text: "⚙️ 设置" }, { text: "❓ 帮助" }]
+                [{ text: "🎭 选择角色" }, { text: "💰 充值" }],
+                [{ text: "🗂 历史聊天" },{ text: "⚙️ 设置" }],
+                [{ text: "❓ 帮助" }]
             ],
             resize_keyboard: true
         };

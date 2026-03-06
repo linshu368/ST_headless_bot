@@ -1,4 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
+import express from 'express';
+import type { Server } from 'http';
 import { SimpleChat } from '../chat/usecases/SimpleChat.js';
 import { ChannelRegistry } from '../../infrastructure/ai/ChannelRegistry.js';
 import { SupabaseMessageRepository } from '../../infrastructure/repositories/SupabaseMessageRepository.js';
@@ -14,6 +16,11 @@ import { SupabaseUserRepository } from '../../infrastructure/repositories/Supaba
 import { runtimeConfig } from '../../infrastructure/runtime_config/RuntimeConfigService.js';
 import { SupabaseCreditRepository } from '../../infrastructure/repositories/SupabaseCreditRepository.js';
 import { getTotalBalance, InsufficientCreditsError } from '../credits/rules/creditCost.js';
+import { PaymentUIHandler } from './PaymentUIHandler.js';
+import { RechargeUseCase } from '../payment/usecases/RechargeUseCase.js';
+import { calculateCreditsFromRecharge, formatCredits } from '../payment/domain/rechargeRules.js';
+import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
+import type { InternalPaymentEvent } from '../../types/payment.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -31,6 +38,8 @@ export class TelegramBotAdapter {
     private sessionManager: SessionManager; // Add SessionManager
     private userRepository: SupabaseUserRepository;
     private creditsRepository: SupabaseCreditRepository | null;
+    private rechargeUseCase: RechargeUseCase | null;
+    private internalHttpServer: Server | null = null;
     private isPolling: boolean = false;
     private processedMessageIds: Set<number> = new Set();
     private readonly MAX_PROCESSED_IDS = 1000;
@@ -38,6 +47,9 @@ export class TelegramBotAdapter {
     // User State Management for Snapshot Naming
     // userId -> state (null | 'awaiting_snapshot_name')
     private userStates: Map<string, string> = new Map();
+
+    // 已完成入账的订单号（幂等保护，防止重复入账）
+    private processedOrderIds: Set<string> = new Set();
 
     // Per-User Concurrency Lock: 防止同一用户并发对话
     // chatId -> 加锁时间戳 (ms)
@@ -82,6 +94,11 @@ export class TelegramBotAdapter {
         this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository, creditsRepository);
         this.userRepository = new SupabaseUserRepository();
         this.creditsRepository = creditsRepository;
+        
+        // 初始化充值用例（仅当支付功能启用时）
+        this.rechargeUseCase = config.payment.enabled
+            ? new RechargeUseCase(creditsRepository)
+            : null;
     }
 
     /**
@@ -97,19 +114,23 @@ export class TelegramBotAdapter {
         
         // 注册事件处理
         this.bot.on('message', this._handleMessage.bind(this));
-        this.bot.on('callback_query', this._handleCallbackQuery.bind(this)); // Register callback handler
-        // Note: polling_error is already registered in constructor
+        this.bot.on('callback_query', this._handleCallbackQuery.bind(this));
 
         await this.bot.startPolling({
-            restart: true, // 允许自动重启 polling
+            restart: true,
             polling: {
                 params: {
-                    timeout: 10 // 长轮询超时时间 (秒)
+                    timeout: 10
                 }
             }
         });
         this.isPolling = true;
         logger.info({ kind: 'sys', component: COMPONENT, message: 'Service is online' });
+
+        // 启动内部 HTTP 服务器（接收支付 Service 转发的回调）
+        if (config.payment.enabled) {
+            this._startInternalApi();
+        }
     }
 
     /**
@@ -119,7 +140,62 @@ export class TelegramBotAdapter {
         if (!this.isPolling) return;
         await this.bot.stopPolling();
         this.isPolling = false;
+
+        if (this.internalHttpServer) {
+            this.internalHttpServer.close();
+            this.internalHttpServer = null;
+        }
+
         logger.info({ kind: 'sys', component: COMPONENT, message: 'Service stopped' });
+    }
+
+    /**
+     * 内部 HTTP API（仅供 Payment Service 调用）
+     * 端点：POST /internal/payment-callback
+     */
+    private _startInternalApi(): void {
+        const app = express();
+        app.use(express.json());
+
+        app.get('/health', (_req, res) => {
+            res.json({ status: 'ok', service: 'bot-internal-api' });
+        });
+
+        app.post('/internal/payment-callback', async (req, res) => {
+            const event = req.body as InternalPaymentEvent;
+            const { userId, orderId, amount, paymentType } = event;
+
+            if (!userId || !orderId || !amount) {
+                res.status(400).json({ error: 'Missing required fields' });
+                return;
+            }
+
+            logger.info({
+                kind: 'biz', component: COMPONENT,
+                message: 'Payment callback received from Payment Service',
+                meta: { userId, orderId, amount, paymentType }
+            });
+
+            try {
+                await this._handlePaymentSuccessInternal(userId, amount, orderId, paymentType);
+                res.json({ success: true });
+            } catch (error) {
+                logger.error({
+                    kind: 'sys', component: COMPONENT,
+                    message: 'Internal payment callback processing error',
+                    error, meta: { userId, orderId }
+                });
+                res.status(500).json({ error: 'Processing failed' });
+            }
+        });
+
+        const port = config.payment.internalApiPort;
+        this.internalHttpServer = app.listen(port, () => {
+            logger.info({
+                kind: 'sys', component: COMPONENT,
+                message: `Internal API started on port ${port}`
+            });
+        });
     }
 
     /**
@@ -191,6 +267,9 @@ export class TelegramBotAdapter {
                 return;
             } else if (text === '❓ 帮助') {
                 await this._handleHelp(chatId);
+                return;
+            } else if (text === '💰 充值') {
+                await this._handleRechargeMenu(chatId);
                 return;
             } else if (text === '🎭 选择角色' || text === '🗂 历史聊天') {
                  if (text === '🎭 选择角色') {
@@ -771,6 +850,27 @@ export class TelegramBotAdapter {
                         }
                     }
                     break;
+
+                // ========== 支付相关回调 ==========
+                case 'pay_method':
+                    await this._handlePaymentMethodSelect(chatId, params[0] as PaymentType, query);
+                    break;
+
+                case 'pay_amount':
+                    await this._handlePaymentAmountSelect(chatId, parseInt(params[0]), params[1] as PaymentType, query);
+                    break;
+
+                case 'pay_check':
+                    await this._handlePaymentStatusCheck(chatId, params[0], query);
+                    break;
+
+                case 'pay_back':
+                    if (query.message?.message_id) {
+                        await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+                    }
+                    await this._handleRechargeMenu(chatId);
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
             }
         } catch (error) {
             logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback handling error', error });
@@ -811,5 +911,198 @@ export class TelegramBotAdapter {
         if (mode === ModelTier.TIER_3) return '旗舰模型';
         if (mode === ModelTier.TIER_4) return '尊享模型';
         return '旗舰模型';
+    }
+
+    // ========== 支付相关方法 ==========
+
+    /**
+     * 处理充值入口菜单
+     */
+    private async _handleRechargeMenu(chatId: string): Promise<void> {
+        if (!this.rechargeUseCase) {
+            await this.bot.sendMessage(chatId, '❌ 充值功能暂未开放');
+            return;
+        }
+
+        await this.bot.sendMessage(chatId, PaymentUIHandler.getRechargeWelcomeMessage(), {
+            parse_mode: 'Markdown',
+            reply_markup: PaymentUIHandler.createPaymentMethodKeyboard()
+        });
+    }
+
+    /**
+     * 处理支付方式选择
+     */
+    private async _handlePaymentMethodSelect(
+        chatId: string,
+        paymentType: PaymentType,
+        query: TelegramBot.CallbackQuery
+    ): Promise<void> {
+        const method = PAYMENT_METHODS.find(m => m.code === paymentType);
+        if (!method) {
+            await this.bot.answerCallbackQuery(query.id, { text: '无效的支付方式' });
+            return;
+        }
+
+        await this.bot.editMessageText(PaymentUIHandler.getAmountSelectionMessage(paymentType), {
+            chat_id: chatId,
+            message_id: query.message?.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: PaymentUIHandler.createAmountKeyboard(paymentType)
+        });
+        await this.bot.answerCallbackQuery(query.id);
+    }
+
+    /**
+     * 处理充值金额选择
+     */
+    private async _handlePaymentAmountSelect(
+        chatId: string,
+        amount: number,
+        paymentType: PaymentType,
+        query: TelegramBot.CallbackQuery
+    ): Promise<void> {
+        if (!this.rechargeUseCase) {
+            await this.bot.answerCallbackQuery(query.id, { text: '充值功能暂未开放' });
+            return;
+        }
+
+        // 删除金额选择消息
+        if (query.message?.message_id) {
+            await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+        }
+
+        // 发送创建中提示
+        const placeholder = await this.bot.sendMessage(chatId, '⏳ 正在创建订单...');
+
+        // 创建订单
+        const result = await this.rechargeUseCase.createRechargeOrder(chatId, amount, paymentType);
+
+        if (result.success && result.paymentUrl && result.orderId) {
+            await this.bot.editMessageText(
+                PaymentUIHandler.getOrderCreatedMessage(result.orderId, amount, paymentType),
+                {
+                    chat_id: chatId,
+                    message_id: placeholder.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: PaymentUIHandler.createPaymentOrderKeyboard(result.paymentUrl, result.orderId)
+                }
+            );
+            logger.info({ kind: 'biz', component: COMPONENT, message: 'Recharge order created', 
+                meta: { chatId, amount, paymentType, orderId: result.orderId } });
+        } else {
+            await this.bot.editMessageText(`❌ 创建订单失败：${result.errorMessage}`, {
+                chat_id: chatId,
+                message_id: placeholder.message_id
+            });
+        }
+
+        await this.bot.answerCallbackQuery(query.id);
+    }
+
+    /**
+     * 处理订单状态查询
+     * 兜底机制：如果查询到已支付，主动触发积分入账（防止异步回调丢失）
+     */
+    private async _handlePaymentStatusCheck(
+        chatId: string,
+        orderId: string,
+        query: TelegramBot.CallbackQuery
+    ): Promise<void> {
+        if (!this.rechargeUseCase) {
+            await this.bot.answerCallbackQuery(query.id, { text: '充值功能暂未开放' });
+            return;
+        }
+
+        const result = await this.rechargeUseCase.queryOrderStatus(orderId);
+
+        await this.bot.answerCallbackQuery(query.id, {
+            text: result.status === 'paid' ? '✅ 已支付' : '⏳ 等待支付'
+        });
+
+        if (result.status === 'paid' && result.amount) {
+            // 从订单号中提取支付方式（callback_data 格式为 pay_check:{orderId}，无法携带 paymentType）
+            // 此处使用 queryOrder 返回的 paymentType，若无则用 unknown
+            await this._handlePaymentSuccessInternal(
+                chatId, result.amount, orderId, result.paymentType || 'unknown'
+            );
+        } else if (result.status === 'paid') {
+            await this.bot.sendMessage(chatId,
+                PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.amount),
+                { parse_mode: 'Markdown' }
+            );
+        }
+    }
+
+    /**
+     * 处理支付成功事件（由内部 API 或 pay_check 兜底触发）
+     * 全部业务逻辑在 Bot Service 内完成：积分计算 → 入账 → Telegram 通知
+     * 内置幂等保护：同一订单号只入账一次
+     */
+    private async _handlePaymentSuccessInternal(
+        userId: string,
+        amountStr: string,
+        orderId: string,
+        paymentType: string
+    ): Promise<void> {
+        // 幂等：同一订单号不重复入账
+        if (this.processedOrderIds.has(orderId)) {
+            logger.info({
+                kind: 'biz', component: COMPONENT,
+                message: 'Duplicate payment event ignored (already processed)',
+                meta: { userId, orderId }
+            });
+            return;
+        }
+
+        const amountNum = parseFloat(amountStr);
+        const { mainCredits, bonusCredits } = calculateCreditsFromRecharge(amountNum);
+
+        logger.info({
+            kind: 'biz', component: COMPONENT,
+            message: 'Processing payment success',
+            meta: { userId, orderId, amount: amountNum, mainCredits, bonusCredits }
+        });
+
+        // 1. 积分入账
+        const success = await this.creditsRepository?.addCredits(userId, mainCredits, bonusCredits) ?? false;
+
+        if (!success) {
+            logger.error({
+                kind: 'biz', component: COMPONENT,
+                message: 'Failed to add credits',
+                meta: { userId, orderId }
+            });
+            return;
+        }
+
+        // 标记为已处理（幂等）
+        this.processedOrderIds.add(orderId);
+
+        logger.info({
+            kind: 'biz', component: COMPONENT,
+            message: 'Credits added successfully',
+            meta: { userId, orderId, mainCredits, bonusCredits }
+        });
+
+        // 2. 发送 Telegram 通知
+        const methodName = PaymentUIHandler.getPaymentMethodName(paymentType);
+        const message = `✅ **充值成功！**
+
+💰 充值金额：¥${amountNum}
+📋 订单号：\`${orderId}\`
+💳 支付方式：${methodName}
+✨ 获得星尘：${formatCredits(mainCredits)}${bonusCredits > 0 ? `\n🎁 额外赠送：${formatCredits(bonusCredits)}` : ''}
+
+感谢您的支持！`;
+
+        await this.bot.sendMessage(userId, message, { parse_mode: 'Markdown' })
+            .catch(err => {
+                logger.error({
+                    kind: 'biz', component: COMPONENT,
+                    message: 'Failed to send payment success notification',
+                    error: err, meta: { userId, orderId }
+                });
+            });
     }
 }
