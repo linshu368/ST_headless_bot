@@ -71,6 +71,7 @@ export interface Config {
         port: number;
         internalApiPort: number;
         botServiceUrl: string;
+        creditsPlans: { credits: number; priceCNY: number }[];
     };
 }
 
@@ -139,6 +140,12 @@ const config: Config = {
         port: Number(process.env.PAYMENT_PORT || '3000'),
         internalApiPort: Number(process.env.INTERNAL_API_PORT || '3001'),
         botServiceUrl: process.env.BOT_SERVICE_URL || 'http://localhost:3001',
+        creditsPlans: [
+            { credits: 600,   priceCNY: 6 },
+            { credits: 3300,  priceCNY: 28 },
+            { credits: 11800, priceCNY: 98 },
+            { credits: 42800, priceCNY: 328 },
+        ],
     },
     // --- 运行时配置 (已迁移至 Supabase runtime_config 表) ---
     // 以下为静态 fallback 默认值，仅在 Supabase + Redis 均不可用时启用

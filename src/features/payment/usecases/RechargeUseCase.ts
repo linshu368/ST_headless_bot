@@ -93,14 +93,13 @@ export class RechargeUseCase {
             meta: { userId, amount, orderId, paymentType },
         });
 
-        // 1. 计算积分
-        const { mainCredits, bonusCredits, bonusPercent } = calculateCreditsFromRecharge(amount);
+        const { mainCredits, bonusCredits } = calculateCreditsFromRecharge(amount);
 
         logger.debug({
             kind: 'biz',
             component: COMPONENT,
             message: 'Credits calculated',
-            meta: { userId, mainCredits, bonusCredits, bonusPercent },
+            meta: { userId, mainCredits, bonusCredits },
         });
 
         // 2. 入账积分

@@ -939,7 +939,7 @@ export class TelegramBotAdapter {
     }
 
     /**
-     * 处理支付方式选择
+     * 处理支付方式选择 — 发送套餐图片 + 星尘档位按钮
      */
     private async _handlePaymentMethodSelect(
         chatId: string,
@@ -952,11 +952,21 @@ export class TelegramBotAdapter {
             return;
         }
 
-        await this.bot.editMessageText(PaymentUIHandler.getAmountSelectionMessage(paymentType), {
-            chat_id: chatId,
-            message_id: query.message?.message_id,
+        if (!supabase) {
+            await this.bot.answerCallbackQuery(query.id, { text: '系统配置错误' });
+            return;
+        }
+
+        if (query.message?.message_id) {
+            await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+        }
+
+        const { data } = supabase.storage.from('model_photo').getPublicUrl('credits_plan.png');
+
+        await this.bot.sendPhoto(chatId, data.publicUrl, {
+            caption: PaymentUIHandler.getCreditsSelectionCaption(),
             parse_mode: 'Markdown',
-            reply_markup: PaymentUIHandler.createAmountKeyboard(paymentType)
+            reply_markup: PaymentUIHandler.createCreditsPlansKeyboard(paymentType)
         });
         await this.bot.answerCallbackQuery(query.id);
     }

@@ -1,47 +1,46 @@
 /**
  * 充值业务规则 (Layer 3 Domain)
- * 职责：定义充值金额档位、积分转换比例、赠送规则
+ * 职责：定义星尘套餐、积分换算、订单号生成
  */
 
-/** 充值金额档位（人民币） */
-export const RECHARGE_AMOUNTS = [1, 5, 10, 20, 50, 100, 200, 500] as const;
-export type RechargeAmount = typeof RECHARGE_AMOUNTS[number];
+import config from '../../../platform/config.js';
 
-/** 人民币 → 积分 转换比例（1元 = 100积分） */
-const CNY_TO_CREDITS_RATIO = 100;
+/** 星尘套餐定义 */
+export interface CreditsPlan {
+    credits: number;   // 星尘数量（展示给用户）
+    priceCNY: number;  // 实际支付金额（人民币）
+}
+
+/** 从 config 读取套餐映射表，方便后续迁移至 runtime_config */
+export function getCreditsPlans(): CreditsPlan[] {
+    return config.payment.creditsPlans;
+}
+
+/** 根据星尘数量查找对应套餐 */
+export function findPlanByCredits(credits: number): CreditsPlan | undefined {
+    return getCreditsPlans().find(p => p.credits === credits);
+}
+
+/** 根据人民币金额查找对应套餐 */
+export function findPlanByPrice(priceCNY: number): CreditsPlan | undefined {
+    return getCreditsPlans().find(p => p.priceCNY === priceCNY);
+}
 
 /**
- * 充值赠送规则（阶梯式）
- * 充值金额达到阈值时，按比例赠送额外积分
- */
-const BONUS_RULES: { threshold: number; bonusPercent: number }[] = [
-    { threshold: 100, bonusPercent: 5 },   // 充100送5%
-    { threshold: 200, bonusPercent: 10 },  // 充200送10%
-    { threshold: 500, bonusPercent: 15 },  // 充500送15%
-];
-
-/**
- * 计算充值获得的积分
+ * 计算充值获得的积分（基于套餐映射表）
  * @param amountCNY 充值金额（人民币）
- * @returns 主账户积分 + 赠送积分
+ * @returns mainCredits = 套餐对应的星尘数，bonusCredits 固定为 0（赠送已包含在套餐定价中）
  */
 export function calculateCreditsFromRecharge(amountCNY: number): {
     mainCredits: number;
     bonusCredits: number;
-    bonusPercent: number;
 } {
-    const mainCredits = Math.floor(amountCNY * CNY_TO_CREDITS_RATIO);
-
-    let bonusPercent = 0;
-    for (const rule of BONUS_RULES) {
-        if (amountCNY >= rule.threshold) {
-            bonusPercent = rule.bonusPercent;
-        }
+    const plan = findPlanByPrice(amountCNY);
+    if (plan) {
+        return { mainCredits: plan.credits, bonusCredits: 0 };
     }
-
-    const bonusCredits = Math.floor(mainCredits * bonusPercent / 100);
-
-    return { mainCredits, bonusCredits, bonusPercent };
+    // fallback: 未匹配套餐时不发放积分，由调用方处理
+    return { mainCredits: 0, bonusCredits: 0 };
 }
 
 /**
@@ -61,20 +60,4 @@ export function generateOrderNo(userId: string): string {
  */
 export function formatCredits(credits: number): string {
     return credits.toLocaleString('zh-CN') + ' 星尘';
-}
-
-/**
- * 获取充值说明文案
- */
-export function getRechargeDescription(amountCNY: number): string {
-    const { mainCredits, bonusCredits, bonusPercent } = calculateCreditsFromRecharge(amountCNY);
-
-    let description = `充值 ¥${amountCNY} → 获得 ${formatCredits(mainCredits)}`;
-
-    if (bonusCredits > 0) {
-        description += `\n🎁 额外赠送 ${bonusPercent}%：${formatCredits(bonusCredits)}`;
-        description += `\n✨ 共计：${formatCredits(mainCredits + bonusCredits)}`;
-    }
-
-    return description;
 }

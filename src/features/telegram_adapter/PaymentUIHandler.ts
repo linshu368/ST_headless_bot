@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
-import { RECHARGE_AMOUNTS } from '../payment/domain/rechargeRules.js';
+import { getCreditsPlans } from '../payment/domain/rechargeRules.js';
 
 /**
  * 支付 UI 处理器 (Layer 1)
@@ -20,24 +20,26 @@ export class PaymentUIHandler {
     }
 
     /**
-     * 创建金额选择键盘
+     * 创建星尘套餐选择键盘（每行一个按钮）
      */
-    static createAmountKeyboard(paymentType: PaymentType): TelegramBot.InlineKeyboardMarkup {
-        const rows: TelegramBot.InlineKeyboardButton[][] = [];
+    static createCreditsPlansKeyboard(paymentType: PaymentType): TelegramBot.InlineKeyboardMarkup {
+        const plans = getCreditsPlans();
+        const rows: TelegramBot.InlineKeyboardButton[][] = plans.map(plan => ([
+            { text: `✨ ${plan.credits} 星尘`, callback_data: `pay_amount:${plan.priceCNY}:${paymentType}` }
+        ]));
 
-        // 每行4个按钮
-        for (let i = 0; i < RECHARGE_AMOUNTS.length; i += 4) {
-            const row = RECHARGE_AMOUNTS.slice(i, i + 4).map(amount => ({
-                text: `¥${amount}`,
-                callback_data: `pay_amount:${amount}:${paymentType}`
-            }));
-            rows.push(row);
-        }
-
-        // 返回按钮
         rows.push([{ text: '🔙 返回选择支付方式', callback_data: 'pay_back' }]);
 
         return { inline_keyboard: rows };
+    }
+
+    /**
+     * 套餐图片消息的 caption
+     */
+    static getCreditsSelectionCaption(): string {
+        return `
+━━━━━━━━━━━━
+`;
     }
 
     /**
@@ -83,25 +85,6 @@ export class PaymentUIHandler {
 💚 微信支付 - 扫码即付
 
 请选择支付方式：`;
-    }
-
-    /**
-     * 获取金额选择消息
-     */
-    static getAmountSelectionMessage(paymentType: PaymentType): string {
-        const method = PAYMENT_METHODS.find(m => m.code === paymentType);
-        const methodName = method ? `${method.icon} ${method.name}` : paymentType;
-
-        return `${methodName}
-
-${method?.description || ''}
-
-💡 充值越多，赠送越多：
-• 充 ¥100 → 送 5%
-• 充 ¥200 → 送 10%
-• 充 ¥500 → 送 15%
-
-请选择充值金额：`;
     }
 
     /**
