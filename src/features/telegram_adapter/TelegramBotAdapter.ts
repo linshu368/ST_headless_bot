@@ -1038,9 +1038,17 @@ export class TelegramBotAdapter {
         await this.bot.answerCallbackQuery(query.id);
 
         if (result.status === 'paid' && result.amount) {
-            await this._handlePaymentSuccessInternal(
-                chatId, result.amount, orderId, result.paymentType || 'unknown'
-            );
+            if (!this.processedOrderIds.has(orderId)) {
+                await this._handlePaymentSuccessInternal(
+                    chatId, result.amount, orderId, result.paymentType || 'unknown'
+                );
+            } else {
+                await this.bot.sendMessage(
+                    chatId,
+                    `✅ 订单 \`${orderId}\` 已支付成功，星尘已到账。`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
         } else {
             const statusMsg = await PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.paymentType, result.amount);
             await this.bot.sendMessage(chatId, statusMsg, { parse_mode: 'Markdown' });
