@@ -3,27 +3,24 @@
  * 职责：定义星尘套餐、积分换算、订单号生成
  */
 
-import config from '../../../platform/config.js';
+import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
+import type { CreditsPlan } from '../../../types/payment.js';
 
-/** 星尘套餐定义 */
-export interface CreditsPlan {
-    credits: number;   // 星尘数量（展示给用户）
-    priceCNY: number;  // 实际支付金额（人民币）
-}
-
-/** 从 config 读取套餐映射表，方便后续迁移至 runtime_config */
-export function getCreditsPlans(): CreditsPlan[] {
-    return config.payment.creditsPlans;
+/** 从 runtime_config 读取套餐映射表 */
+export async function getCreditsPlans(): Promise<CreditsPlan[]> {
+    return runtimeConfig.getPaymentCreditsPlans();
 }
 
 /** 根据星尘数量查找对应套餐 */
-export function findPlanByCredits(credits: number): CreditsPlan | undefined {
-    return getCreditsPlans().find(p => p.credits === credits);
+export async function findPlanByCredits(credits: number): Promise<CreditsPlan | undefined> {
+    const plans = await getCreditsPlans();
+    return plans.find(p => p.credits === credits);
 }
 
 /** 根据人民币金额查找对应套餐 */
-export function findPlanByPrice(priceCNY: number): CreditsPlan | undefined {
-    return getCreditsPlans().find(p => p.priceCNY === priceCNY);
+export async function findPlanByPrice(priceCNY: number): Promise<CreditsPlan | undefined> {
+    const plans = await getCreditsPlans();
+    return plans.find(p => p.priceCNY === priceCNY);
 }
 
 /**
@@ -31,11 +28,11 @@ export function findPlanByPrice(priceCNY: number): CreditsPlan | undefined {
  * @param amountCNY 充值金额（人民币）
  * @returns mainCredits = 套餐对应的星尘数，bonusCredits 固定为 0（赠送已包含在套餐定价中）
  */
-export function calculateCreditsFromRecharge(amountCNY: number): {
+export async function calculateCreditsFromRecharge(amountCNY: number): Promise<{
     mainCredits: number;
     bonusCredits: number;
-} {
-    const plan = findPlanByPrice(amountCNY);
+}> {
+    const plan = await findPlanByPrice(amountCNY);
     if (plan) {
         return { mainCredits: plan.credits, bonusCredits: 0 };
     }

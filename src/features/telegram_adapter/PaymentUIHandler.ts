@@ -1,6 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
 import { getCreditsPlans } from '../payment/domain/rechargeRules.js';
+import { runtimeConfig } from '../../infrastructure/runtime_config/RuntimeConfigService.js';
+import { renderTemplate } from '../../infrastructure/runtime_config/templateRenderer.js';
 
 /**
  * 支付 UI 处理器 (Layer 1)
@@ -22,8 +24,8 @@ export class PaymentUIHandler {
     /**
      * 创建星尘套餐选择键盘（每行一个按钮）
      */
-    static createCreditsPlansKeyboard(paymentType: PaymentType): TelegramBot.InlineKeyboardMarkup {
-        const plans = getCreditsPlans();
+    static async createCreditsPlansKeyboard(paymentType: PaymentType): Promise<TelegramBot.InlineKeyboardMarkup> {
+        const plans = await getCreditsPlans();
         const rows: TelegramBot.InlineKeyboardButton[][] = plans.map(plan => ([
             { text: `✨ ${plan.credits} 星尘`, callback_data: `pay_amount:${plan.priceCNY}:${paymentType}` }
         ]));
@@ -75,71 +77,77 @@ export class PaymentUIHandler {
     /**
      * 获取充值入口消息
      */
-    static getRechargeWelcomeMessage(): string {
-        return `💰 **星尘充值**
-
-星尘是您与 AI 角色对话的能量来源。
-
-📌 **支持的支付方式：**
-💳 支付宝 - 扫码即付
-💚 微信支付 - 扫码即付
-
-请选择支付方式：`;
+    static async getRechargeWelcomeMessage(): Promise<string> {
+        return runtimeConfig.getPaymentTemplate('payment_recharge_welcome');
     }
 
     /**
      * 获取订单创建成功消息
      */
-    static getOrderCreatedMessage(
+    static async getOrderCreatedMessage(
         orderId: string,
         amount: number,
         paymentType: PaymentType
-    ): string {
+    ): Promise<string> {
+        const template = await runtimeConfig.getPaymentTemplate('payment_order_created');
         const methodName = PaymentUIHandler.getPaymentMethodName(paymentType);
-
-        return `✅ **订单已创建**
-
-订单将于15分钟后关闭哦~~
---------------------------------------
-📋 订单信息：
-• 订单号：\`${orderId}\`
-• 充值金额：${amount}元
-• 支付方式：${methodName}
---------------------------------------
-
-点击下方按钮开始支付 ⬇️`;
+        return renderTemplate(template, {
+            orderId,
+            amount: String(amount),
+            methodName,
+        });
     }
 
     /**
      * 获取订单查询结果消息
      */
-    static getOrderStatusMessage(
+    static async getOrderStatusMessage(
         orderId: string,
         status: 'paid' | 'pending' | 'expired' | 'failed',
         paymentType?: string,
         amount?: string
-    ): string {
+    ): Promise<string> {
         const methodName = paymentType ? PaymentUIHandler.getPaymentMethodName(paymentType) : '';
 
         if (status === 'expired') {
-            return `超时未支付，本次订单\`${orderId}\`已取消`;
+            const template = await runtimeConfig.getPaymentTemplate('payment_order_expired');
+            return renderTemplate(template, { orderId });
         }
 
         if (status === 'pending') {
-            return `⏳ 等待支付
-
-订单将于15分钟后关闭哦~~
-------------------------------------
-📋 订单信息：
-• 订单号：\`${orderId}\`${methodName ? `\n• 支付方式：${methodName}` : ''}${amount ? `\n• 支付金额：${amount}元` : ''}
-------------------------------------
-（如果客官已经支付完成，请稍等3分钟哦，后台正加紧为您补充星尘）`;
+            const template = await runtimeConfig.getPaymentTemplate('payment_order_pending');
+            return renderTemplate(template, {
+                orderId,
+                methodName,
+                amount: amount ?? '',
+            });
         }
 
         if (status === 'failed') {
-            return `❌ 查询失败\n\n📋 订单号：\`${orderId}\`\n\n请稍后再试。`;
+            const template = await runtimeConfig.getPaymentTemplate('payment_order_failed');
+            return renderTemplate(template, { orderId });
         }
 
         return '';
+    }
+
+    /**
+     * 获取充值成功通知消息
+     */
+    static async getPaymentSuccessMessage(
+        amount: number,
+        orderId: string,
+        methodName: string,
+        mainCreditsText: string,
+        bonusCreditsText: string,
+    ): Promise<string> {
+        const template = await runtimeConfig.getPaymentTemplate('payment_success');
+        return renderTemplate(template, {
+            amount: String(amount),
+            orderId,
+            methodName,
+            mainCredits: mainCreditsText,
+            bonusLine: bonusCreditsText,
+        });
     }
 }

@@ -14,11 +14,62 @@ import config from '../../platform/config.js';
 import { supabase } from '../supabase/SupabaseClient.js';
 import { logger } from '../../platform/logger.js';
 import type { AIChannelConfig, TierMappingConfig } from '../../types/config.js';
+import type { CreditsPlan } from '../../types/payment.js';
 import { RuntimeConfigSchema } from './RuntimeConfigSchema.js';
 import type { StreamScheduleConfig } from '../../features/chat/rules/streamingSchedule.js';
 
 const COMPONENT = 'RuntimeConfig';
 const REDIS_KEY_PREFIX = 'runtime_config';
+
+/** 支付文案模板的静态降级默认值（Layer 3 兜底） */
+const PAYMENT_TEMPLATE_FALLBACKS: Record<string, string> = {
+    payment_recharge_welcome: `💰 **星尘充值**
+
+星尘是您与 AI 角色对话的能量来源。
+
+📌 **支持的支付方式：**
+💳 支付宝 - 扫码即付
+💚 微信支付 - 扫码即付
+
+请选择支付方式：`,
+
+    payment_order_created: `✅ **订单已创建**
+
+订单将于15分钟后关闭哦~~
+--------------------------------------
+📋 订单信息：
+• 订单号：\`{{orderId}}\`
+• 充值金额：{{amount}}元
+• 支付方式：{{methodName}}
+--------------------------------------
+
+点击下方按钮开始支付 ⬇️`,
+
+    payment_order_expired: '超时未支付，本次订单`{{orderId}}`已取消',
+
+    payment_order_pending: `⏳ 等待支付
+
+订单将于15分钟后关闭哦~~
+------------------------------------
+📋 订单信息：
+• 订单号：\`{{orderId}}\`
+{{#if methodName}}• 支付方式：{{methodName}}
+{{/if}}{{#if amount}}• 支付金额：{{amount}}元
+{{/if}}------------------------------------
+（如果客官已经支付完成，请稍等3分钟哦，后台正加紧为您补充星尘）`,
+
+    payment_order_failed: '❌ 查询失败\n\n📋 订单号：`{{orderId}}`\n\n请稍后再试。',
+
+    payment_success: `✅ **充值成功！**
+
+💰 充值金额：¥{{amount}}
+📋 订单号：\`{{orderId}}\`
+💳 支付方式：{{methodName}}
+✨ 获得星尘：{{mainCredits}}
+{{#if bonusLine}}🎁 额外赠送：{{bonusLine}}
+{{/if}}
+感谢您的支持！`,
+};
 const CACHE_TTL_MS = 60_000; // 60 seconds
 const REFRESH_INTERVAL_MS = 60_000; // 60 seconds
 const LOCK_KEY_PREFIX = 'runtime_config_lock';
@@ -342,6 +393,20 @@ export class RuntimeConfigService {
         return { firstUpdateChars, regularUpdateIntervalSec };
     }
 
+    /** 获取支付文案模板（带 {{var}} 占位符的原始模板） */
+    async getPaymentTemplate(key: string): Promise<string> {
+        const fallback = PAYMENT_TEMPLATE_FALLBACKS[key];
+        if (fallback === undefined) {
+            throw new Error(`Unknown payment template key: ${key}`);
+        }
+        return this.get<string>(key, fallback);
+    }
+
+    /** 获取支付套餐映射表 */
+    async getPaymentCreditsPlans(): Promise<CreditsPlan[]> {
+        return this.get<CreditsPlan[]>('payment_credits_plans', config.payment.creditsPlans);
+    }
+
     // =============================================
     // Private: Redis Operations (Upstash REST API)
     // =============================================
@@ -448,7 +513,13 @@ export class RuntimeConfigService {
             };
         }
 
-        if (key === 'system_instructions' || key === 'welcome_message') {
+        if (key === 'payment_credits_plans' && Array.isArray(value)) {
+            return {
+                count: value.length,
+            };
+        }
+
+        if (key === 'system_instructions' || key === 'welcome_message' || key.startsWith('payment_')) {
             const text = typeof value === 'string' ? value : '';
             return {
                 length: text.length,

@@ -93,7 +93,7 @@ export class RechargeUseCase {
             meta: { userId, amount, orderId, paymentType },
         });
 
-        const { mainCredits, bonusCredits } = calculateCreditsFromRecharge(amount);
+        const { mainCredits, bonusCredits } = await calculateCreditsFromRecharge(amount);
 
         logger.debug({
             kind: 'biz',

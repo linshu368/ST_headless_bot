@@ -21,6 +21,12 @@ export const PAYMENT_METHODS: PaymentMethodConfig[] = [
     { code: 'wxpay', name: '微信支付', icon: '💚', description: '微信扫码支付', device: 'jump' },
 ];
 
+/** 星尘套餐定义 */
+export interface CreditsPlan {
+    credits: number;   // 星尘数量（展示给用户）
+    priceCNY: number;  // 实际支付金额（人民币）
+}
+
 /** 创建支付订单参数 */
 export interface CreatePaymentParams {
     type: PaymentType;

@@ -1,4 +1,5 @@
 import type { AIChannelConfig, TierMappingConfig } from '../../types/config.js';
+import type { CreditsPlan } from '../../types/payment.js';
 import type { AIConfigSourceData } from './RuntimeConfigService.js';
 
 export interface RuntimeConfigMeta {
@@ -135,6 +136,20 @@ const parseAIConfigSource = (value: unknown, key: string): AIConfigSourceData =>
     return { channels, tier_mapping, tier_costs };
 };
 
+const parseCreditsPlans = (value: unknown, key: string): CreditsPlan[] => {
+    if (!Array.isArray(value)) {
+        throw new Error(`RuntimeConfigSchema: ${key} must be an array`);
+    }
+    return value.map((planRaw, idx) => {
+        if (!isRecord(planRaw)) {
+            throw new Error(`RuntimeConfigSchema: ${key}[${idx}] must be an object`);
+        }
+        const credits = parseNumber('credits', planRaw.credits, key);
+        const priceCNY = parseNumber('priceCNY', planRaw.priceCNY, key);
+        return { credits, priceCNY };
+    });
+};
+
 export const RuntimeConfigSchema = {
     parse<T = unknown>(input: RuntimeConfigRowInput): RuntimeConfigRowParsed<T> {
         const version = parseVersion(input.version);
@@ -144,6 +159,10 @@ export const RuntimeConfigSchema = {
             case 'ai_config_source': {
                 // 复杂对象仍然只从 value 解析
                 const value = parseAIConfigSource(input.value, input.key);
+                return { key: input.key, value: value as T, version, updated_at };
+            }
+            case 'payment_credits_plans': {
+                const value = parseCreditsPlans(input.value, input.key);
                 return { key: input.key, value: value as T, version, updated_at };
             }
             case 'max_history_items':
@@ -164,8 +183,14 @@ export const RuntimeConfigSchema = {
             case 'insufficient_credits_message':
             case 'ops_prompt_commit_process_diff':
             case 'ops_prompt_project_arch':
-            case 'ops_prompt_project_principle': {
-                // 纯文本配置：只读 text_value
+            case 'ops_prompt_project_principle':
+            case 'payment_recharge_welcome':
+            case 'payment_order_created':
+            case 'payment_order_expired':
+            case 'payment_order_pending':
+            case 'payment_order_failed':
+            case 'payment_success': {
+                // 纯文本配置（含模板占位符）：只读 text_value
                 const value = requireTextValue(input.key, input.text_value);
                 return { key: input.key, value: value as T, version, updated_at };
             }

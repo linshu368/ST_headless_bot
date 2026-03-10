@@ -932,7 +932,8 @@ export class TelegramBotAdapter {
             return;
         }
 
-        await this.bot.sendMessage(chatId, PaymentUIHandler.getRechargeWelcomeMessage(), {
+        const welcomeMsg = await PaymentUIHandler.getRechargeWelcomeMessage();
+        await this.bot.sendMessage(chatId, welcomeMsg, {
             parse_mode: 'Markdown',
             reply_markup: PaymentUIHandler.createPaymentMethodKeyboard()
         });
@@ -966,7 +967,7 @@ export class TelegramBotAdapter {
         await this.bot.sendPhoto(chatId, data.publicUrl, {
             caption: PaymentUIHandler.getCreditsSelectionCaption(),
             parse_mode: 'Markdown',
-            reply_markup: PaymentUIHandler.createCreditsPlansKeyboard(paymentType)
+            reply_markup: await PaymentUIHandler.createCreditsPlansKeyboard(paymentType)
         });
         await this.bot.answerCallbackQuery(query.id);
     }
@@ -997,8 +998,9 @@ export class TelegramBotAdapter {
         const result = await this.rechargeUseCase.createRechargeOrder(chatId, amount, paymentType);
 
         if (result.success && result.paymentUrl && result.orderId) {
+            const orderMsg = await PaymentUIHandler.getOrderCreatedMessage(result.orderId, amount, paymentType);
             await this.bot.editMessageText(
-                PaymentUIHandler.getOrderCreatedMessage(result.orderId, amount, paymentType),
+                orderMsg,
                 {
                     chat_id: chatId,
                     message_id: placeholder.message_id,
@@ -1040,10 +1042,8 @@ export class TelegramBotAdapter {
                 chatId, result.amount, orderId, result.paymentType || 'unknown'
             );
         } else {
-            await this.bot.sendMessage(chatId,
-                PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.paymentType, result.amount),
-                { parse_mode: 'Markdown' }
-            );
+            const statusMsg = await PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.paymentType, result.amount);
+            await this.bot.sendMessage(chatId, statusMsg, { parse_mode: 'Markdown' });
         }
     }
 
@@ -1069,7 +1069,7 @@ export class TelegramBotAdapter {
         }
 
         const amountNum = parseFloat(amountStr);
-        const { mainCredits, bonusCredits } = calculateCreditsFromRecharge(amountNum);
+        const { mainCredits, bonusCredits } = await calculateCreditsFromRecharge(amountNum);
 
         logger.info({
             kind: 'biz', component: COMPONENT,
@@ -1100,14 +1100,13 @@ export class TelegramBotAdapter {
 
         // 2. 发送 Telegram 通知
         const methodName = PaymentUIHandler.getPaymentMethodName(paymentType);
-        const message = `✅ **充值成功！**
-
-💰 充值金额：¥${amountNum}
-📋 订单号：\`${orderId}\`
-💳 支付方式：${methodName}
-✨ 获得星尘：${formatCredits(mainCredits)}${bonusCredits > 0 ? `\n🎁 额外赠送：${formatCredits(bonusCredits)}` : ''}
-
-感谢您的支持！`;
+        const message = await PaymentUIHandler.getPaymentSuccessMessage(
+            amountNum,
+            orderId,
+            methodName,
+            formatCredits(mainCredits),
+            bonusCredits > 0 ? formatCredits(bonusCredits) : '',
+        );
 
         await this.bot.sendMessage(userId, message, { parse_mode: 'Markdown' })
             .catch(err => {
