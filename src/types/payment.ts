@@ -72,4 +72,21 @@ export interface InternalPaymentEvent {
     orderId: string;
     amount: string;
     paymentType: string;
+    providerTransactionId?: string;
+}
+
+/** 支付订单状态 */
+export type PaymentOrderStatus = 'pending' | 'completed' | 'failed' | 'expired';
+
+/** 支付订单持久化记录 */
+export interface PaymentOrder {
+    transaction_id: string;
+    user_id: string;
+    amount: number;
+    credits_amount: number;
+    payment_status: PaymentOrderStatus;
+    payment_provider: PaymentType;
+    provider_transaction_id: string | null;
+    credits_added: boolean;
+    created_at: string;
 }

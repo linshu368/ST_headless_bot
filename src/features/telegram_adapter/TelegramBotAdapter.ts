@@ -21,6 +21,7 @@ import { RechargeUseCase } from '../payment/usecases/RechargeUseCase.js';
 import { calculateCreditsFromRecharge, formatCredits } from '../payment/domain/rechargeRules.js';
 import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
 import type { InternalPaymentEvent } from '../../types/payment.js';
+import { SupabasePaymentOrderRepository } from '../../infrastructure/repositories/SupabasePaymentOrderRepository.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -48,8 +49,11 @@ export class TelegramBotAdapter {
     // userId -> state (null | 'awaiting_snapshot_name')
     private userStates: Map<string, string> = new Map();
 
-    // 已完成入账的订单号（幂等保护，防止重复入账）
+    // DB 幂等 + 内存热缓存（重启后从 DB 恢复）
     private processedOrderIds: Set<string> = new Set();
+    private paymentOrderRepo: SupabasePaymentOrderRepository;
+    private orderExpiryTimer: ReturnType<typeof setInterval> | null = null;
+    private static readonly ORDER_EXPIRY_INTERVAL_MS = 10 * 60 * 1000;
 
     // Per-User Concurrency Lock: 防止同一用户并发对话
     // chatId -> 加锁时间戳 (ms)
@@ -96,8 +100,9 @@ export class TelegramBotAdapter {
         this.creditsRepository = creditsRepository;
         
         // 初始化充值用例（仅当支付功能启用时）
+        this.paymentOrderRepo = new SupabasePaymentOrderRepository();
         this.rechargeUseCase = config.payment.enabled
-            ? new RechargeUseCase(creditsRepository)
+            ? new RechargeUseCase(creditsRepository, undefined, this.paymentOrderRepo)
             : null;
     }
 
@@ -130,6 +135,7 @@ export class TelegramBotAdapter {
         // 启动内部 HTTP 服务器（接收支付 Service 转发的回调）
         if (config.payment.enabled) {
             this._startInternalApi();
+            this._startOrderExpiryTimer();
         }
     }
 
@@ -144,6 +150,11 @@ export class TelegramBotAdapter {
         if (this.internalHttpServer) {
             this.internalHttpServer.close();
             this.internalHttpServer = null;
+        }
+
+        if (this.orderExpiryTimer) {
+            clearInterval(this.orderExpiryTimer);
+            this.orderExpiryTimer = null;
         }
 
         logger.info({ kind: 'sys', component: COMPONENT, message: 'Service stopped' });
@@ -163,7 +174,7 @@ export class TelegramBotAdapter {
 
         app.post('/internal/payment-callback', async (req, res) => {
             const event = req.body as InternalPaymentEvent;
-            const { userId, orderId, amount, paymentType } = event;
+            const { userId, orderId, amount, paymentType, providerTransactionId } = event;
 
             if (!userId || !orderId || !amount) {
                 res.status(400).json({ error: 'Missing required fields' });
@@ -173,11 +184,11 @@ export class TelegramBotAdapter {
             logger.info({
                 kind: 'biz', component: COMPONENT,
                 message: 'Payment callback received from Payment Service',
-                meta: { userId, orderId, amount, paymentType }
+                meta: { userId, orderId, amount, paymentType, providerTransactionId }
             });
 
             try {
-                await this._handlePaymentSuccessInternal(userId, amount, orderId, paymentType);
+                await this._handlePaymentSuccessInternal(userId, amount, orderId, paymentType, providerTransactionId);
                 res.json({ success: true });
             } catch (error) {
                 logger.error({
@@ -1038,18 +1049,24 @@ export class TelegramBotAdapter {
         await this.bot.answerCallbackQuery(query.id);
 
         if (result.status === 'paid' && result.amount) {
-            if (!this.processedOrderIds.has(orderId)) {
-                await this._handlePaymentSuccessInternal(
-                    chatId, result.amount, orderId, result.paymentType || 'unknown'
-                );
-            } else {
+            const existingOrder = await this.paymentOrderRepo.findByTransactionId(orderId);
+            if (existingOrder?.credits_added) {
                 await this.bot.sendMessage(
                     chatId,
                     `✅ 订单 \`${orderId}\` 已支付成功，星尘已到账。`,
                     { parse_mode: 'Markdown' }
                 );
+            } else {
+                await this._handlePaymentSuccessInternal(
+                    chatId, result.amount, orderId, result.paymentType || 'unknown'
+                );
             }
         } else {
+            if (result.status === 'expired') {
+                await this.paymentOrderRepo.markFailed(orderId);
+            } else if (result.status === 'failed') {
+                await this.paymentOrderRepo.markFailed(orderId);
+            }
             const statusMsg = await PaymentUIHandler.getOrderStatusMessage(orderId, result.status, result.paymentType, result.amount);
             await this.bot.sendMessage(chatId, statusMsg, { parse_mode: 'Markdown' });
         }
@@ -1058,19 +1075,32 @@ export class TelegramBotAdapter {
     /**
      * 处理支付成功事件（由内部 API 或 pay_check 兜底触发）
      * 全部业务逻辑在 Bot Service 内完成：积分计算 → 入账 → Telegram 通知
-     * 内置幂等保护：同一订单号只入账一次
+     * 幂等保护：内存热缓存 + DB payment_status/credits_added 双重守卫
      */
     private async _handlePaymentSuccessInternal(
         userId: string,
         amountStr: string,
         orderId: string,
-        paymentType: string
+        paymentType: string,
+        providerTransactionId?: string,
     ): Promise<void> {
-        // 幂等：同一订单号不重复入账
+        // 热路径：内存缓存快速拦截
         if (this.processedOrderIds.has(orderId)) {
             logger.info({
                 kind: 'biz', component: COMPONENT,
-                message: 'Duplicate payment event ignored (already processed)',
+                message: 'Duplicate payment event ignored (memory cache)',
+                meta: { userId, orderId }
+            });
+            return;
+        }
+
+        // DB 幂等校验
+        const existingOrder = await this.paymentOrderRepo.findByTransactionId(orderId);
+        if (existingOrder?.credits_added) {
+            this.processedOrderIds.add(orderId);
+            logger.info({
+                kind: 'biz', component: COMPONENT,
+                message: 'Duplicate payment event ignored (DB: credits already added)',
                 meta: { userId, orderId }
             });
             return;
@@ -1085,19 +1115,30 @@ export class TelegramBotAdapter {
             meta: { userId, orderId, amount: amountNum, mainCredits, bonusCredits }
         });
 
-        // 1. 积分入账
+        // 1. 标记订单为 completed（DB 级 WHERE pending 防重）
+        const affected = await this.paymentOrderRepo.markCompleted(orderId, providerTransactionId);
+        if (affected === 0 && existingOrder?.payment_status !== 'completed') {
+            logger.warn({
+                kind: 'biz', component: COMPONENT,
+                message: 'markCompleted affected 0 rows — order may not exist in DB or already processed',
+                meta: { userId, orderId }
+            });
+        }
+
+        // 2. 积分入账
         const success = await this.creditsRepository?.addCredits(userId, mainCredits, bonusCredits) ?? false;
 
         if (!success) {
             logger.error({
                 kind: 'biz', component: COMPONENT,
-                message: 'Failed to add credits',
+                message: 'Payment completed but credits addition FAILED — requires attention',
                 meta: { userId, orderId }
             });
             return;
         }
 
-        // 标记为已处理（幂等）
+        // 3. 标记积分已到账
+        await this.paymentOrderRepo.markCreditsAdded(orderId);
         this.processedOrderIds.add(orderId);
 
         logger.info({
@@ -1106,7 +1147,7 @@ export class TelegramBotAdapter {
             meta: { userId, orderId, mainCredits, bonusCredits }
         });
 
-        // 2. 发送 Telegram 通知
+        // 4. 发送 Telegram 通知
         const methodName = PaymentUIHandler.getPaymentMethodName(paymentType);
         const message = await PaymentUIHandler.getPaymentSuccessMessage(
             amountNum,
@@ -1124,5 +1165,33 @@ export class TelegramBotAdapter {
                     error: err, meta: { userId, orderId }
                 });
             });
+    }
+
+    /**
+     * 启动定时任务：每 10 分钟将超时的 pending 订单标记为 expired
+     */
+    private _startOrderExpiryTimer(): void {
+        this.orderExpiryTimer = setInterval(async () => {
+            try {
+                const count = await this.paymentOrderRepo.expireStaleOrders();
+                if (count > 0) {
+                    logger.info({
+                        kind: 'biz', component: COMPONENT,
+                        message: `Order expiry sweep: ${count} orders marked expired`,
+                    });
+                }
+            } catch (err) {
+                logger.error({
+                    kind: 'sys', component: COMPONENT,
+                    message: 'Order expiry sweep failed',
+                    error: err,
+                });
+            }
+        }, TelegramBotAdapter.ORDER_EXPIRY_INTERVAL_MS);
+
+        logger.info({
+            kind: 'sys', component: COMPONENT,
+            message: `Order expiry timer started (interval: ${TelegramBotAdapter.ORDER_EXPIRY_INTERVAL_MS / 1000}s)`,
+        });
     }
 }

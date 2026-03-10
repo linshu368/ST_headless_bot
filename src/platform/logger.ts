@@ -61,21 +61,30 @@ function serializeError(error: unknown): Record<string, unknown> | undefined {
     if (!error) return undefined;
     
     if (error instanceof Error) {
-        return {
+        const serialized: Record<string, unknown> = {
             name: error.name,
             message: error.message,
             stack: error.stack,
-            // 保留 cause 链 (ES2022 Error Cause)
-            ...(error.cause ? { cause: serializeError(error.cause) } : {}),
-            // 保留任何自定义属性
-            ...Object.fromEntries(
-                Object.entries(error).filter(([key]) => !['name', 'message', 'stack', 'cause'].includes(key))
-            )
         };
+
+        if (error.cause) {
+            serialized.cause = serializeError(error.cause);
+        }
+
+        const axiosErr = error as unknown as Record<string, unknown>;
+        if (axiosErr.code) serialized.code = axiosErr.code;
+        if (axiosErr.status) serialized.status = axiosErr.status;
+        if (axiosErr.response && typeof axiosErr.response === 'object') {
+            const resp = axiosErr.response as Record<string, unknown>;
+            serialized.responseStatus = resp.status;
+            serialized.responseData = resp.data;
+        }
+
+        return serialized;
     }
     
-    // 非 Error 对象，尝试 JSON 序列化
     try {
+        JSON.stringify(error);
         return { raw: error };
     } catch {
         return { raw: String(error) };

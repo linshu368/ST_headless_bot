@@ -1,25 +1,32 @@
 import { logger } from '../../../platform/logger.js';
 import { paymentGateway, JLPaymentGateway } from '../../../infrastructure/payment/JLPaymentGateway.js';
 import type { PaymentType, PaymentResult, OrderQueryResult } from '../../../types/payment.js';
-import { generateOrderNo, calculateCreditsFromRecharge, formatCredits } from '../domain/rechargeRules.js';
+import { generateOrderNo, calculateCreditsFromRecharge, findPlanByPrice, formatCredits } from '../domain/rechargeRules.js';
 import type { ICreditsRepository } from '../../credits/ports/ICreditsRepository.js';
+import { SupabasePaymentOrderRepository } from '../../../infrastructure/repositories/SupabasePaymentOrderRepository.js';
 
 const COMPONENT = 'RechargeUseCase';
 
 /**
  * 充值用例 (Layer 2 UseCase)
  * 职责：
- * 1. 创建支付订单
+ * 1. 创建支付订单（含持久化）
  * 2. 处理支付成功回调
  * 3. 协调积分入账
  */
 export class RechargeUseCase {
     private creditsRepository: ICreditsRepository;
     private gateway: JLPaymentGateway;
+    private orderRepository: SupabasePaymentOrderRepository;
 
-    constructor(creditsRepository: ICreditsRepository, gateway?: JLPaymentGateway) {
+    constructor(
+        creditsRepository: ICreditsRepository,
+        gateway?: JLPaymentGateway,
+        orderRepository?: SupabasePaymentOrderRepository,
+    ) {
         this.creditsRepository = creditsRepository;
         this.gateway = gateway || paymentGateway;
+        this.orderRepository = orderRepository || new SupabasePaymentOrderRepository();
     }
 
     /**
@@ -58,6 +65,23 @@ export class RechargeUseCase {
                 message: 'Recharge order created',
                 meta: { userId, orderId, paymentUrl: result.paymentUrl?.slice(0, 50) },
             });
+
+            const plan = await findPlanByPrice(amount);
+            const creditsAmount = plan?.credits ?? 0;
+            const persisted = await this.orderRepository.createOrder({
+                transactionId: orderId,
+                userId,
+                amount,
+                creditsAmount,
+                paymentProvider: paymentType,
+            });
+            if (!persisted) {
+                logger.warn({
+                    kind: 'biz', component: COMPONENT,
+                    message: 'Order created but failed to persist to DB (non-blocking)',
+                    meta: { userId, orderId },
+                });
+            }
         } else {
             logger.warn({
                 kind: 'biz',
@@ -129,6 +153,10 @@ export class RechargeUseCase {
      */
     async queryOrderStatus(orderId: string): Promise<OrderQueryResult> {
         return await this.gateway.queryOrder(orderId);
+    }
+
+    getOrderRepository(): SupabasePaymentOrderRepository {
+        return this.orderRepository;
     }
 
     /**

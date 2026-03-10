@@ -98,7 +98,8 @@ async function handlePaymentNotify(req: Request, res: Response) {
             }
 
             // 3. 转发给 Bot Service 处理业务逻辑（含重试）
-            const event: InternalPaymentEvent = { userId, orderId, amount, paymentType };
+            const providerTransactionId = notifyData.trade_no || '';
+            const event: InternalPaymentEvent = { userId, orderId, amount, paymentType, providerTransactionId };
             const MAX_ATTEMPTS = 3;
             let forwarded = false;
 
@@ -138,7 +139,8 @@ async function handlePaymentNotify(req: Request, res: Response) {
 
         res.send('success');
     } catch (error) {
-        logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback processing error', error, meta: { traceId } });
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback processing error', error, meta: { traceId, errorMessage: errMsg } });
         res.status(500).send('error');
     }
 }
