@@ -79,7 +79,7 @@ export class SupabasePaymentOrderRepository {
 
         try {
             const updatePayload: Record<string, unknown> = { payment_status: 'completed' };
-            if (providerTransactionId) {
+            if (providerTransactionId !== undefined && providerTransactionId !== null) {
                 updatePayload.provider_transaction_id = providerTransactionId;
             }
 
@@ -168,6 +168,35 @@ export class SupabasePaymentOrderRepository {
             logger.error({
                 kind: 'infra', component: COMPONENT,
                 message: 'Exception marking order failed',
+                error: err, meta: { transactionId },
+            });
+            return false;
+        }
+    }
+
+    async markExpired(transactionId: string): Promise<boolean> {
+        if (!supabase) return false;
+
+        try {
+            const { error } = await supabase
+                .from(TABLE)
+                .update({ payment_status: 'expired' as PaymentOrderStatus })
+                .eq('transaction_id', transactionId)
+                .eq('payment_status', 'pending');
+
+            if (error) {
+                logger.error({
+                    kind: 'infra', component: COMPONENT,
+                    message: 'Failed to mark order expired',
+                    error, meta: { transactionId },
+                });
+                return false;
+            }
+            return true;
+        } catch (err) {
+            logger.error({
+                kind: 'infra', component: COMPONENT,
+                message: 'Exception marking order expired',
                 error: err, meta: { transactionId },
             });
             return false;

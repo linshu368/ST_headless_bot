@@ -1063,7 +1063,7 @@ export class TelegramBotAdapter {
             }
         } else {
             if (result.status === 'expired') {
-                await this.paymentOrderRepo.markFailed(orderId);
+                await this.paymentOrderRepo.markExpired(orderId);
             } else if (result.status === 'failed') {
                 await this.paymentOrderRepo.markFailed(orderId);
             }
