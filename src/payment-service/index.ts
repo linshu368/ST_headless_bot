@@ -59,14 +59,21 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 // 支付异步回调（第三方 → 本服务 → Bot Service）
-app.post('/payment/notify', async (req: Request, res: Response) => {
-    const notifyData = req.body as PaymentNotifyData;
+// 同时支持 GET（query string）和 POST（form body），兼容不同支付平台的回调方式
+async function handlePaymentNotify(req: Request, res: Response) {
+    const notifyData = (req.method === 'GET' ? req.query : req.body) as PaymentNotifyData;
     const traceId = `notify:${notifyData.out_trade_no || Date.now()}`;
 
     logger.info({
         kind: 'infra', component: COMPONENT,
         message: 'Payment callback received',
-        meta: { traceId, orderId: notifyData.out_trade_no, status: notifyData.trade_status }
+        meta: {
+            traceId,
+            method: req.method,
+            orderId: notifyData.out_trade_no,
+            status: notifyData.trade_status,
+            fields: Object.keys(notifyData).join(','),
+        }
     });
 
     try {
@@ -81,7 +88,7 @@ app.post('/payment/notify', async (req: Request, res: Response) => {
         if (notifyData.trade_status === 'TRADE_SUCCESS') {
             const userId = notifyData.param || '';
             const orderId = notifyData.out_trade_no;
-            const amount = notifyData.total_fee;
+            const amount = notifyData.money;
             const paymentType = notifyData.type || 'unknown';
 
             if (!userId) {
@@ -134,7 +141,10 @@ app.post('/payment/notify', async (req: Request, res: Response) => {
         logger.error({ kind: 'sys', component: COMPONENT, message: 'Callback processing error', error, meta: { traceId } });
         res.status(500).send('error');
     }
-});
+}
+
+app.get('/payment/notify', handlePaymentNotify);
+app.post('/payment/notify', handlePaymentNotify);
 
 // 支付完成跳转页
 app.get('/payment/return', (req: Request, res: Response) => {

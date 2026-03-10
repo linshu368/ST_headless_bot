@@ -57,11 +57,22 @@ export class JLPaymentGateway {
         const isValid = receivedSign === calculatedSign;
 
         if (!isValid) {
+            const sortedKeys = Object.keys(params)
+                .filter(key => key !== 'sign' && key !== 'sign_type' && params[key] !== '' && params[key] !== undefined)
+                .sort();
+            const signString = sortedKeys.map(key => `${key}=${params[key]}`).join('&');
+
             logger.warn({
                 kind: 'infra',
                 component: COMPONENT,
                 message: 'Signature verification failed',
-                meta: { outTradeNo: notifyData.out_trade_no },
+                meta: {
+                    outTradeNo: notifyData.out_trade_no,
+                    receivedSign,
+                    calculatedSign,
+                    signFields: sortedKeys.join(','),
+                    signString,
+                },
             });
         }
         return isValid;

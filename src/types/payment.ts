@@ -44,15 +44,18 @@ export interface PaymentResult {
     orderId?: string;
 }
 
-/** 支付回调通知数据 */
+/** 支付回调通知数据（V1 接口） */
 export interface PaymentNotifyData {
+    pid: string;
     trade_no: string;
     out_trade_no: string;
-    total_fee: string;
+    type: string;
+    name: string;
+    money: string;
     trade_status: string;
     param?: string;
-    type?: string;
     sign: string;
+    sign_type?: string;
     [key: string]: string | undefined;
 }
 
