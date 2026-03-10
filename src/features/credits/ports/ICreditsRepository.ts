@@ -30,7 +30,8 @@ export interface ICreditsRepository {
      * @param userId 用户ID
      * @param mainCredits 充值积分（计入 main_credits）
      * @param bonusCredits 赠送积分（计入 bonus_credits）
+     * @param paidAmount 本次实付金额（CNY），用于更新付费统计字段；非付费场景传 0 或省略
      * @returns true=充值成功, false=系统异常
      */
-    addCredits(userId: string, mainCredits: number, bonusCredits: number): Promise<boolean>;
+    addCredits(userId: string, mainCredits: number, bonusCredits: number, paidAmount?: number): Promise<boolean>;
 }

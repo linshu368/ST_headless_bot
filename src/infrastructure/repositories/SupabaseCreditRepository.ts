@@ -82,7 +82,7 @@ export class SupabaseCreditRepository implements ICreditsRepository {
         }
     }
 
-    async addCredits(userId: string, mainCredits: number, bonusCredits: number): Promise<boolean> {
+    async addCredits(userId: string, mainCredits: number, bonusCredits: number, paidAmount: number = 0): Promise<boolean> {
         if (!supabase) return false;
 
         try {
@@ -90,6 +90,7 @@ export class SupabaseCreditRepository implements ICreditsRepository {
                 p_user_id: userId,
                 p_main_credits: mainCredits,
                 p_bonus_credits: bonusCredits,
+                p_paid_amount: paidAmount,
             });
 
             if (error) {
@@ -110,7 +111,7 @@ export class SupabaseCreditRepository implements ICreditsRepository {
                 kind: 'infra',
                 component: COMPONENT,
                 message: success ? 'Credits added successfully' : 'add_credits RPC returned unexpected value',
-                meta: { userId, mainCredits, bonusCredits, result: data, resultType: typeof data },
+                meta: { userId, mainCredits, bonusCredits, paidAmount, result: data, resultType: typeof data },
             });
 
             return success;

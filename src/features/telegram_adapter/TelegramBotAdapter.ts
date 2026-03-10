@@ -1126,7 +1126,7 @@ export class TelegramBotAdapter {
         }
 
         // 2. 积分入账
-        const success = await this.creditsRepository?.addCredits(userId, mainCredits, bonusCredits) ?? false;
+        const success = await this.creditsRepository?.addCredits(userId, mainCredits, bonusCredits, amountNum) ?? false;
 
         if (!success) {
             logger.error({
