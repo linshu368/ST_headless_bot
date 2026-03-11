@@ -330,9 +330,10 @@ export class TelegramBotAdapter {
                 let isFirstEdit = true;
 
                 for await (const update of this.simpleChat.streamChat(chatId, text, timer)) {
-                    if (!update.text || update.text.trim().length === 0 || update.text === lastText) continue;
+                    const sanitizedText = this._sanitizeBotReply(update.text || '');
+                    if (!sanitizedText || sanitizedText.trim().length === 0 || sanitizedText === lastText) continue;
 
-                    await this.bot.editMessageText(update.text, {
+                    await this.bot.editMessageText(sanitizedText, {
                         chat_id: msg.chat.id,
                         message_id: placeholder.message_id
                     });
@@ -348,7 +349,7 @@ export class TelegramBotAdapter {
                         isFirstEdit = false;
                     }
 
-                    lastText = update.text;
+                    lastText = sanitizedText;
                 }
 
                 if (!lastText) {
@@ -588,13 +589,19 @@ export class TelegramBotAdapter {
         // Step 2: Send last assistant message + action buttons
         const lastAssistantMsg = snapshot.history.slice().reverse().find(m => m.role === 'assistant');
         const previewContent = lastAssistantMsg 
-            ? (typeof lastAssistantMsg.content === 'string' ? lastAssistantMsg.content : "...") 
+            ? (typeof lastAssistantMsg.content === 'string' ? this._sanitizeBotReply(lastAssistantMsg.content) : "...") 
             : "(暂无对话记录)";
 
         await this.bot.sendMessage(chatId, previewContent, {
             disable_web_page_preview: true,
             reply_markup: UIHandler.createSnapshotPreviewKeyboard(snapshotId)
         });
+    }
+
+    private _sanitizeBotReply(text: string): string {
+        if (!text) return '';
+        const withoutTags = text.replace(/<[^>]*>/g, '');
+        return withoutTags.replace(/\uFFFD/g, '');
     }
 
     private async _handleSettings(chatId: string): Promise<void> {
@@ -722,13 +729,14 @@ export class TelegramBotAdapter {
                     try {
                          // 3. 执行重新生成逻辑
                         for await (const update of this.simpleChat.streamRegenerate(chatId)) {
-                            if (!update.text || update.text.trim().length === 0 || update.text === lastText) continue;
+                            const sanitizedText = this._sanitizeBotReply(update.text || '');
+                            if (!sanitizedText || sanitizedText.trim().length === 0 || sanitizedText === lastText) continue;
 
-                            await this.bot.editMessageText(update.text, {
+                            await this.bot.editMessageText(sanitizedText, {
                                 chat_id: chatId,
                                 message_id: placeholder.message_id
                             });
-                            lastText = update.text;
+                            lastText = sanitizedText;
                         }
 
                         if (!lastText) {

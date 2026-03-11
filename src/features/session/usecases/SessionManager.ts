@@ -264,18 +264,20 @@ export class SessionManager {
         ]);
         timer?.mark('history_loaded');
 
+        const cleanedHistory = this._sanitizeAssistantHistory(existingHistory);
+
         // 3. Determine Role ID from Session Data
         const currentRoleId = (existingSessionData?.role_id as string | undefined) || defaultRoleId;
         const character = await this._loadCharacter(currentRoleId);
         timer?.mark('char_loaded');
 
         // 4. Build session object
-        const session = await this._createSession(userId, character, sessionId, existingHistory, existingSessionData);
+        const session = await this._createSession(userId, character, sessionId, cleanedHistory, existingSessionData);
         timer?.mark('session_built');
 
         // Persist inherited history to new session's Redis key so it survives restarts
-        if (isNew && expiredSessionId && this.sessionStore && existingHistory.length > 0) {
-            this.sessionStore.setMessages(sessionId, existingHistory).catch(error => {
+        if (isNew && expiredSessionId && this.sessionStore && cleanedHistory.length > 0) {
+            this.sessionStore.setMessages(sessionId, cleanedHistory).catch(error => {
                 logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to persist inherited history to new session', error, meta: { sessionId } });
             });
         }
@@ -647,11 +649,13 @@ export class SessionManager {
         // 4. Replace history + update metadata in current session
         if (this.sessionStore) {
             try {
+                const cleanedHistory = this._sanitizeAssistantHistory(snapshot.history || []);
+
                 // Replace history with snapshot's history
-                await this.sessionStore.setMessages(sessionId, snapshot.history || []);
+                await this.sessionStore.setMessages(sessionId, cleanedHistory);
 
                 // Restore session metadata including round (context-continuous from snapshot)
-                const restoredRound = snapshot.round ?? Math.floor((snapshot.history?.length || 0) / 2);
+                const restoredRound = snapshot.round ?? Math.floor((cleanedHistory.length || 0) / 2);
                 await this._updateSessionData(sessionId, {
                     role_id: snapshot.role_id,
                     post_link: character.extensions?.post_link,
@@ -681,5 +685,21 @@ export class SessionManager {
      */
     async deleteSnapshot(snapshotId: string): Promise<boolean> {
         return await this.snapshotRepository.deleteSnapshot(snapshotId);
+    }
+
+    private _sanitizeAssistantText(text: unknown): string {
+        if (!text) return '';
+        const raw = typeof text === 'string' ? text : String(text);
+        const withoutTags = raw.replace(/<[^>]*>/g, '');
+        return withoutTags.replace(/\uFFFD/g, '');
+    }
+
+    private _sanitizeAssistantHistory(history: OpenAIMessage[]): OpenAIMessage[] {
+        if (!Array.isArray(history) || history.length === 0) return history || [];
+        return history.map((msg) => {
+            if (!msg || msg.role !== 'assistant') return msg;
+            const cleaned = this._sanitizeAssistantText(msg.content);
+            return { ...msg, content: cleaned };
+        });
     }
 }

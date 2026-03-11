@@ -147,6 +147,7 @@ export class SimpleChat {
         }
 
         if (replyText) {
+            const cleanedReply = this._sanitizeAssistantText(replyText);
             // 6. 更新 Layer 2 历史状态 (User + Bot)
             await this.sessionManager.appendMessages(session, [
                 {
@@ -155,12 +156,12 @@ export class SimpleChat {
                 },
                 {
                     role: 'assistant',
-                    content: replyText
+                    content: cleanedReply
                 }
             ]);
             
             // 返回纯文本给 Layer 1 (Telegram)
-            return replyText;
+            return cleanedReply;
         } else {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Generation returned empty' });
             return "收到空回复...";
@@ -195,6 +196,7 @@ export class SimpleChat {
 
         // 保存历史 (Chat 特有: 追加 User + Bot)
         if (accumulatedText) {
+            const cleanedReply = this._sanitizeAssistantText(accumulatedText);
             await this.sessionManager.appendMessages(session, [
                 {
                     role: 'user',
@@ -202,7 +204,7 @@ export class SimpleChat {
                 },
                 {
                     role: 'assistant',
-                    content: accumulatedText
+                    content: cleanedReply
                 }
             ]);
         }
@@ -248,10 +250,11 @@ export class SimpleChat {
 
         // 3. 保存历史 (Regenerate 特有: 只追加 Bot，因为 User 已经在回滚后的历史里了)
         if (accumulatedText) {
+            const cleanedReply = this._sanitizeAssistantText(accumulatedText);
             await this.sessionManager.appendMessages(session, [
                 {
                     role: 'assistant',
-                    content: accumulatedText
+                    content: cleanedReply
                 }
             ]);
         }
@@ -468,6 +471,7 @@ export class SimpleChat {
                 meta: { replyLength: accumulatedText.length, latencyMs: Date.now() - startedAtMs } 
             });
 
+            const cleanedReply = this._sanitizeAssistantText(accumulatedText);
             // [New] Async Persist to Supabase (Fire-and-Forget)
             // Extract clean instructions from enhanced input
             let cleanInstructions = enhancedInput;
@@ -480,7 +484,7 @@ export class SimpleChat {
                 user_id: userId,
                 role_id: session.character?.extensions?.role_id || null,
                 user_input: userInput,
-                bot_reply: accumulatedText,
+                bot_reply: cleanedReply,
                 instructions: cleanInstructions,
                 history: executionTrace.finalContext || historySnapshot,
                 model_name: executionTrace.model,
@@ -529,6 +533,13 @@ export class SimpleChat {
         } else {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Streaming returned empty' });
         }
+    }
+
+    private _sanitizeAssistantText(text: string): string {
+        if (!text) return '';
+        const raw = typeof text === 'string' ? text : String(text);
+        const withoutTags = raw.replace(/<[^>]*>/g, '');
+        return withoutTags.replace(/\uFFFD/g, '');
     }
 
     /**
