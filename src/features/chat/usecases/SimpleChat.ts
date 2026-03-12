@@ -16,6 +16,7 @@ import { PipelineChannel } from '../../../infrastructure/ai/channels/PipelineCha
 import { getTraceId } from '../../../platform/tracing.js';
 import type { ICreditsRepository } from '../../credits/ports/ICreditsRepository.js';
 import { getCostForTier, getTotalBalance, hasEnoughCredits, InsufficientCreditsError } from '../../credits/rules/creditCost.js';
+import type { SupabaseUserRepository } from '../../../infrastructure/repositories/SupabaseUserRepository.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -32,12 +33,14 @@ export class SimpleChat {
     private channelRegistry: IChannelRegistry;
     private messageRepository: IMessageRepository;
     private creditsRepository: ICreditsRepository | null;
+    private userRepository: SupabaseUserRepository | null;
 
-    constructor(sessionManager: SessionManager, channelRegistry: IChannelRegistry, messageRepository: IMessageRepository, creditsRepository?: ICreditsRepository) {
+    constructor(sessionManager: SessionManager, channelRegistry: IChannelRegistry, messageRepository: IMessageRepository, creditsRepository?: ICreditsRepository, userRepository?: SupabaseUserRepository) {
         this.sessionManager = sessionManager;
         this.channelRegistry = channelRegistry;
         this.messageRepository = messageRepository;
         this.creditsRepository = creditsRepository ?? null;
+        this.userRepository = userRepository ?? null;
     }
     
     /**
@@ -504,6 +507,10 @@ export class SimpleChat {
                 }
             }).catch(err => {
                 logger.error({ kind: 'infra', component: COMPONENT, message: 'Message persistence failed', error: err });
+            });
+
+            this.userRepository?.incrementTotalRound(userId).catch(err => {
+                logger.error({ kind: 'infra', component: COMPONENT, message: 'Failed to increment total_round', error: err });
             });
 
             // Credit deduction (Fire-and-Forget, 不堵塞响应路径)

@@ -8,6 +8,7 @@ export interface TelegramUserUpsert {
     username?: string | null;
     firstName?: string | null;
     lastName?: string | null;
+    source?: string;
 }
 
 /**
@@ -27,7 +28,7 @@ export class SupabaseUserRepository {
         const userId = input.userId;
         if (!userId) return;
 
-        const payload = {
+        const payload: Record<string, unknown> = {
             user_id: userId,
             tg_username: input.username ?? null,
             tg_first_name: input.firstName ?? null,
@@ -36,6 +37,18 @@ export class SupabaseUserRepository {
         };
 
         try {
+            if (input.source) {
+                const { data: existing } = await supabase
+                    .from('bot_users')
+                    .select('source')
+                    .eq('user_id', userId)
+                    .maybeSingle();
+
+                if (!existing?.source) {
+                    payload.source = input.source;
+                }
+            }
+
             const { error } = await supabase
                 .from('bot_users')
                 .upsert(payload, { onConflict: 'user_id' });
@@ -50,6 +63,20 @@ export class SupabaseUserRepository {
             }
         } catch (error) {
             logger.error({ kind: 'infra', component: COMPONENT, message: 'Exception during bot user upsert', error, meta: { userId } });
+        }
+    }
+
+    async incrementTotalRound(userId: string): Promise<void> {
+        if (!supabase) return;
+
+        try {
+            const { error } = await supabase.rpc('increment_total_round', { target_user_id: userId });
+
+            if (error) {
+                logger.error({ kind: 'infra', component: COMPONENT, message: 'Failed to increment total_round', error, meta: { userId } });
+            }
+        } catch (error) {
+            logger.error({ kind: 'infra', component: COMPONENT, message: 'Exception during total_round increment', error, meta: { userId } });
         }
     }
 }

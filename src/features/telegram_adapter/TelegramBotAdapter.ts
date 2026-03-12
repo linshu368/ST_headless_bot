@@ -95,8 +95,8 @@ export class TelegramBotAdapter {
         const channelRegistry = new ChannelRegistry();
         const messageRepository = new SupabaseMessageRepository();
         const creditsRepository = new SupabaseCreditRepository();
-        this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository, creditsRepository);
         this.userRepository = new SupabaseUserRepository();
+        this.simpleChat = new SimpleChat(this.sessionManager, channelRegistry, messageRepository, creditsRepository, this.userRepository);
         this.creditsRepository = creditsRepository;
         
         // 初始化充值用例（仅当支付功能启用时）
@@ -423,7 +423,7 @@ export class TelegramBotAdapter {
                         await this._handleSnapshotPreview(chatId, snapshotId);
                     } else {
                         logger.info({ kind: 'biz', component: COMPONENT, message: 'Start with tracking payload, treating as new user', meta: { payload } });
-                        await this._handleDefaultStart(chatId);
+                        await this._handleDefaultStart(chatId, payload);
                     }
                 } else {
                     await this._handleDefaultStart(chatId);
@@ -441,7 +441,15 @@ export class TelegramBotAdapter {
         }
     }
 
-    private async _handleDefaultStart(chatId: string): Promise<void> {
+    private async _handleDefaultStart(chatId: string, source?: string): Promise<void> {
+        if (source) {
+            try {
+                await this.userRepository.upsertTelegramUser({ userId: chatId, source });
+            } catch (error) {
+                logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to record source (non-fatal)', error, meta: { chatId, source } });
+            }
+        }
+
         const welcomeMessage = await runtimeConfig.getWelcomeMessage();
         await this.bot.sendMessage(chatId, welcomeMessage, {
             reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl),
