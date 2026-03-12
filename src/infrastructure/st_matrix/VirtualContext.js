@@ -3,6 +3,7 @@ import showdown from 'showdown';
 import _ from 'lodash';
 import Handlebars from 'handlebars';
 import { TextDecoder, TextEncoder } from 'util';
+import { webcrypto } from 'crypto';
 
 /**
  * Creates a standard mock Element for the virtual DOM
@@ -353,6 +354,7 @@ export function createVirtualContext({ configProvider, configUpdater, fetchImple
         Image: class {},
         FileReader: class {},
         XMLHttpRequest: MockXMLHttpRequest, // ADDED
+        crypto: webcrypto,
         getComputedStyle: () => ({ getPropertyValue: () => '' }),
         
         // Injected Globals for ST
