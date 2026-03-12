@@ -421,21 +421,12 @@ export class TelegramBotAdapter {
                     } else if (payload.startsWith('snap_')) {
                         const snapshotId = payload.replace('snap_', '');
                         await this._handleSnapshotPreview(chatId, snapshotId);
+                    } else {
+                        logger.info({ kind: 'biz', component: COMPONENT, message: 'Start with tracking payload, treating as new user', meta: { payload } });
+                        await this._handleDefaultStart(chatId);
                     }
                 } else {
-                    // 1. 发送欢迎语 + 底部按钮 (从 RuntimeConfig 动态获取)
-                    const welcomeMessage = await runtimeConfig.getWelcomeMessage();
-                    await this.bot.sendMessage(chatId, welcomeMessage, {
-                        reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl),
-                    });
-
-                    // 2. 获取当前会话（包含默认角色）
-                    const session = await this.sessionManager.getOrCreateSession(chatId);
-                    
-                    // 3. 发送角色预览 + 开场白
-                    if (session.character) {
-                        await this._sendCharacterGreeting(chatId, session.character);
-                    }
+                    await this._handleDefaultStart(chatId);
                 }
                 break;
             
@@ -447,6 +438,19 @@ export class TelegramBotAdapter {
                 logger.debug({ kind: 'biz', component: COMPONENT, message: 'Unknown command', meta: { command } });
                 await this.bot.sendMessage(chatId, "未知指令。发送 /help 查看帮助。");
                 break;
+        }
+    }
+
+    private async _handleDefaultStart(chatId: string): Promise<void> {
+        const welcomeMessage = await runtimeConfig.getWelcomeMessage();
+        await this.bot.sendMessage(chatId, welcomeMessage, {
+            reply_markup: UIHandler.createRoleChannelKeyboard(config.supabase.roleChannelUrl),
+        });
+
+        const session = await this.sessionManager.getOrCreateSession(chatId);
+
+        if (session.character) {
+            await this._sendCharacterGreeting(chatId, session.character);
         }
     }
 
