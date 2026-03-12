@@ -40,12 +40,12 @@ export class SupabaseUserRepository {
             if (input.source) {
                 const { data: existing } = await supabase
                     .from('bot_users')
-                    .select('source')
+                    .select('source_id')
                     .eq('user_id', userId)
                     .maybeSingle();
 
-                if (!existing?.source) {
-                    payload.source = input.source;
+                if (!existing?.source_id) {
+                    payload.source_id = input.source;
                 }
             }
 
