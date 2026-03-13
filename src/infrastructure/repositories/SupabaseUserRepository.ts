@@ -64,6 +64,7 @@ export class SupabaseUserRepository {
                     meta: { hint: error.hint, details: error.details, userId },
                 });
             } else if (isNewUser) {
+                logger.info({ kind: 'biz', component: COMPONENT, message: 'New user acquired via channel link', meta: { userId, sourceId: input.source } });
                 await this.recordTrafficClick(input.source!);
             }
         } catch (error) {
@@ -85,6 +86,8 @@ export class SupabaseUserRepository {
                     message: `Failed to record traffic click: ${error.message}`,
                     meta: { sourceId },
                 });
+            } else {
+                logger.info({ kind: 'biz', component: COMPONENT, message: 'Traffic click recorded', meta: { sourceId } });
             }
         } catch (error) {
             logger.error({
