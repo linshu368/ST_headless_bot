@@ -12,7 +12,7 @@ import { logger } from '../../platform/logger.js';
 import { RequestTimer } from '../../platform/RequestTimer.js';
 import { generateTraceId, runWithTraceId, setUserId } from '../../platform/tracing.js';
 import { UIHandler } from './UIHandler.js';
-import { SupabaseUserRepository } from '../../infrastructure/repositories/SupabaseUserRepository.js';
+import { SupabaseUserRepository, type TelegramUserUpsert } from '../../infrastructure/repositories/SupabaseUserRepository.js';
 import { runtimeConfig } from '../../infrastructure/runtime_config/RuntimeConfigService.js';
 import { SupabaseCreditRepository } from '../../infrastructure/repositories/SupabaseCreditRepository.js';
 import { getTotalBalance, InsufficientCreditsError } from '../credits/rules/creditCost.js';
@@ -244,17 +244,21 @@ export class TelegramBotAdapter {
             }
 
             // 0.5 维护 bot_users 表（尽量不影响主流程）
-            try {
-                const from = msg.from;
-                await this.userRepository.upsertTelegramUser({
-                    userId: chatId,
-                    username: from?.username ?? null,
-                    firstName: from?.first_name ?? null,
-                    lastName: from?.last_name ?? null,
-                });
-            } catch (error) {
-                // Non-fatal: do not block chat flow
-                logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to upsert bot user (non-fatal)', error, meta: { chatId } });
+            // 跳过 /start 命令：避免无 source 的 upsert 抢先落表，导致后续带 source 的 upsert
+            // 查到用户已存在而丢弃 source_id（竞态 bug）。/start 的用户落表由 _handleDefaultStart 负责。
+            if (!text?.startsWith('/start')) {
+                try {
+                    const from = msg.from;
+                    await this.userRepository.upsertTelegramUser({
+                        userId: chatId,
+                        username: from?.username ?? null,
+                        firstName: from?.first_name ?? null,
+                        lastName: from?.last_name ?? null,
+                    });
+                } catch (error) {
+                    // Non-fatal: do not block chat flow
+                    logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to upsert bot user (non-fatal)', error, meta: { chatId } });
+                }
             }
 
             if (!text) return; // 忽略非文本消息
@@ -268,7 +272,7 @@ export class TelegramBotAdapter {
 
             // 1. 指令处理
             if (text.startsWith('/')) {
-                await this._handleCommand(chatId, text);
+                await this._handleCommand(chatId, text, msg.from);
                 return;
             }
 
@@ -405,28 +409,39 @@ export class TelegramBotAdapter {
     /**
      * 指令路由器
      */
-    private async _handleCommand(chatId: string, commandText: string): Promise<void> {
+    private async _handleCommand(chatId: string, commandText: string, from?: TelegramBot.User): Promise<void> {
         const command = commandText.split(' ')[0].toLowerCase();
 
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Command received', meta: { command } });
 
         switch (command) {
             case '/start':
+                // 步骤 0.5 跳过了 /start 的 upsert（避免竞态丢失 source_id），
+                // 所有 /start 子路径都需要自行确保用户落表。
+                const userInfo = {
+                    userId: chatId,
+                    username: from?.username ?? null,
+                    firstName: from?.first_name ?? null,
+                    lastName: from?.last_name ?? null,
+                };
+
                 const args = commandText.split(' ');
                 if (args.length > 1) {
                     const payload = args[1];
                     if (payload.startsWith('role_')) {
                         const roleId = payload.replace('role_', '');
+                        await this._upsertUserSafe(userInfo);
                         await this._handleStartRole(chatId, roleId);
                     } else if (payload.startsWith('snap_')) {
                         const snapshotId = payload.replace('snap_', '');
+                        await this._upsertUserSafe(userInfo);
                         await this._handleSnapshotPreview(chatId, snapshotId);
                     } else {
                         logger.info({ kind: 'biz', component: COMPONENT, message: 'Start with tracking payload, treating as new user', meta: { payload } });
-                        await this._handleDefaultStart(chatId, payload);
+                        await this._handleDefaultStart(chatId, payload, userInfo);
                     }
                 } else {
-                    await this._handleDefaultStart(chatId);
+                    await this._handleDefaultStart(chatId, undefined, userInfo);
                 }
                 break;
             
@@ -441,13 +456,18 @@ export class TelegramBotAdapter {
         }
     }
 
-    private async _handleDefaultStart(chatId: string, source?: string): Promise<void> {
-        if (source) {
-            try {
-                await this.userRepository.upsertTelegramUser({ userId: chatId, source });
-            } catch (error) {
-                logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to record source (non-fatal)', error, meta: { chatId, source } });
-            }
+    private async _handleDefaultStart(
+        chatId: string,
+        source?: string,
+        userInfo?: Omit<TelegramUserUpsert, 'source'>,
+    ): Promise<void> {
+        try {
+            await this.userRepository.upsertTelegramUser({
+                ...(userInfo ?? { userId: chatId }),
+                source: source ?? undefined,
+            });
+        } catch (error) {
+            logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to upsert user on /start (non-fatal)', error, meta: { chatId, source } });
         }
 
         const welcomeMessage = await runtimeConfig.getWelcomeMessage();
@@ -459,6 +479,14 @@ export class TelegramBotAdapter {
 
         if (session.character) {
             await this._sendCharacterGreeting(chatId, session.character);
+        }
+    }
+
+    private async _upsertUserSafe(userInfo: Omit<TelegramUserUpsert, 'source'>): Promise<void> {
+        try {
+            await this.userRepository.upsertTelegramUser(userInfo);
+        } catch (error) {
+            logger.warn({ kind: 'infra', component: COMPONENT, message: 'Failed to upsert bot user (non-fatal)', error, meta: { userId: userInfo.userId } });
         }
     }
 
