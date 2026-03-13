@@ -37,15 +37,18 @@ export class SupabaseUserRepository {
         };
 
         try {
+            let isNewUser = false;
+
             if (input.source) {
                 const { data: existing } = await supabase
                     .from('bot_users')
-                    .select('source_id')
+                    .select('user_id')
                     .eq('user_id', userId)
                     .maybeSingle();
 
-                if (!existing?.source_id) {
+                if (!existing) {
                     payload.source_id = input.source;
+                    isNewUser = true;
                 }
             }
 
@@ -60,9 +63,35 @@ export class SupabaseUserRepository {
                     message: `Failed to upsert bot user: ${error.message} (code: ${error.code})`,
                     meta: { hint: error.hint, details: error.details, userId },
                 });
+            } else if (isNewUser) {
+                await this.recordTrafficClick(input.source!);
             }
         } catch (error) {
             logger.error({ kind: 'infra', component: COMPONENT, message: 'Exception during bot user upsert', error, meta: { userId } });
+        }
+    }
+
+    private async recordTrafficClick(sourceId: string): Promise<void> {
+        if (!supabase) return;
+
+        try {
+            const { error } = await supabase.rpc('increment_click', {
+                p_source_id: sourceId,
+            });
+
+            if (error) {
+                logger.error({
+                    kind: 'infra', component: COMPONENT,
+                    message: `Failed to record traffic click: ${error.message}`,
+                    meta: { sourceId },
+                });
+            }
+        } catch (error) {
+            logger.error({
+                kind: 'infra', component: COMPONENT,
+                message: 'Exception during traffic click recording',
+                error, meta: { sourceId },
+            });
         }
     }
 
