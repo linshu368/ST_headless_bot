@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import config from '../../../platform/config.js';
-import { STEngineAdapter } from '../../../infrastructure/st_matrix/STEngineAdapter.js';
-import { createFetchInterceptor } from '../../../infrastructure/networking/FetchInterceptor.js';
+import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
+import { SimplePromptEngine } from '@infrastructure/ai/SimplePromptEngine.js';
 import { logger } from '../../../platform/logger.js';
 import type { RequestTimer } from '../../../platform/RequestTimer.js';
 import type { SessionMessage, SessionStore } from '../../../core/ports/SessionStore.js';
@@ -26,7 +26,7 @@ export type OpenAIMessage = SessionMessage;
 export interface ChatSession {
     sessionId: string;
     userId: string;
-    engine: STEngineAdapter;
+    engine: ISTEngine;
     history: OpenAIMessage[];
     character: any; // ST V2 Spec
     turnCount: number;
@@ -297,59 +297,8 @@ export class SessionManager {
     ): Promise<ChatSession> {
         // 1. Character is now passed in (No file loading here)
 
-        // 2. Initialize Adapter Chain (Layer 4)
-        const networkHandler = createFetchInterceptor({
-            api_key_openai: config.openai.apiKey,
-            api_url_openai: config.openai.apiUrl,
-            openai_model: config.openai.model
-        });
-        networkHandler.setMockData({
-            characters: [character],
-            chats: []
-        });
-
-        const engine = new STEngineAdapter({
-            main_api: 'openai',
-            api_key_openai: config.openai.apiKey,
-            api_url_openai: config.openai.apiUrl,
-            openai_model: config.openai.model,
-            // [CRITICAL] Inject Dynamic OpenAI Settings
-            // This configuration drives the ST Core Prompt Manager to build the prompt exactly as requested:
-            // Part 1: character.system_prompt (via 'main')
-            // Part 2 & 3 & 4: First Message + History + User Input (via 'chatHistory' marker)
-            oai_settings: {
-                preset_settings_openai: 'Default',
-                openai_model: config.openai.model || 'gpt-3.5-turbo',
-                system_prompt: character.system_prompt || '', // Fallback for UI display
-                context_template: 'Default',
-                chat_completion_source: 'openai',
-                openai_max_context: 4096,
-                openai_max_tokens: 10000, 
-                openai_temperature: 0.7,
-                prompts: [
-                    { 
-                        identifier: 'main', 
-                        name: 'Main Prompt', 
-                        system_prompt: true, 
-                        role: 'system', 
-                        content: character.system_prompt || '', 
-                        enabled: true 
-                    },
-                    { 
-                        identifier: 'chatHistory', 
-                        name: 'Chat History', 
-                        system_prompt: false, 
-                        marker: true,
-                        enabled: true
-                    }
-                ],
-                prompt_order: [
-                    { identifier: 'main', enabled: true },
-                    { identifier: 'chatHistory', enabled: true }
-                ]
-            }
-        }, networkHandler);
-
+        // 2. Initialize Engine (Lightweight — bypasses ST Core)
+        const engine = new SimplePromptEngine();
         await engine.initialize();
 
         // 3. Initialize History

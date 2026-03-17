@@ -1,3 +1,14 @@
+/**
+ * [BYPASSED] This module is currently unused.
+ *
+ * Fetch interceptor/proxy for the SillyTavern headless engine.
+ * Replaced by SimplePromptEngine which calls the LLM API directly.
+ * Note: The SSE parsing logic (parseOpenAIStream) has been extracted
+ * and reimplemented in SimplePromptEngine._parseSSEStream().
+ *
+ * Re-enable when the product needs World Info / Lorebook / Regex Scripts.
+ * Switch point: SessionManager._createSession()
+ */
 import fs from 'fs';
 import path from 'path';
 import fetch, { Response } from 'node-fetch';

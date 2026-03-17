@@ -1,3 +1,12 @@
+/**
+ * [BYPASSED] This module is currently unused.
+ *
+ * SillyTavern's PromptManager does not work correctly in headless mode
+ * (reversed message order, missing system_prompt). Replaced by SimplePromptEngine.
+ *
+ * Re-enable when the product needs World Info / Lorebook / Regex Scripts.
+ * Switch point: SessionManager._createSession()
+ */
 // @ts-ignore
 import CoreFactory from './CoreFactory.cjs';
 // @ts-ignore

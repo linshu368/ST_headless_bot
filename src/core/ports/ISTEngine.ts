@@ -36,6 +36,12 @@ export interface ISTEngine {
      * @returns Async stream of text deltas
      */
     generateStream(prompt: string, trace?: any): AsyncIterable<string>;
+
+    /**
+     * Abort the current in-flight generation request.
+     * Implementations should cancel any pending network calls to free resources.
+     */
+    abort(): void;
 }
 
 export interface STContextData {
