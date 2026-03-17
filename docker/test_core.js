@@ -1,5 +1,5 @@
 
-import CoreFactory from './CoreFactory.cjs';
+import CoreFactory from '../src/infrastructure/st_matrix/CoreFactory.cjs';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch'; // 引入真实的 fetch

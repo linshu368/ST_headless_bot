@@ -1,7 +1,7 @@
 """
 将角色数据迁移到 Supabase role_data 表
 
-使用 character_v2.json 作为来源，将角色信息批量 upsert 到 Supabase。
+使用 character_v1.json 作为来源，将角色信息批量 upsert 到 Supabase。
 脚本会从项目根目录的 .env 中读取 SUPABASE_URL 和 SUPABASE_KEY。
 """
 
@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
-DEFAULT_ROLE_LIBRARY_FILENAME = "character_v2.json"
+DEFAULT_ROLE_LIBRARY_FILENAME = "character_0313.json"
 DEFAULT_TABLE_NAME = "role_data"
 DEFAULT_BATCH_SIZE = 50
 
@@ -33,13 +33,13 @@ def load_env_file() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Migrate character_v2.json data into Supabase."
+        description="Migrate character_v1.json data into Supabase."
     )
     parser.add_argument(
         "--file",
         type=Path,
         default=Path(__file__).with_name(DEFAULT_ROLE_LIBRARY_FILENAME),
-        help="Path to the source character_v2 JSON file.",
+        help="Path to the source character_v1 JSON file.",
     )
     parser.add_argument(
         "--table",

@@ -11,8 +11,8 @@
 import CoreFactory from './CoreFactory.cjs';
 // @ts-ignore
 import { createVirtualContext } from './VirtualContext.js';
-import { ISTEngine, STContextData, ISTNetworkHandler } from '../../core/ports/ISTEngine.js';
-import { logger, internalLogger } from '../../platform/logger.js';
+import { ISTEngine, STContextData, ISTNetworkHandler } from '../../src/core/ports/ISTEngine.js';
+import { logger, internalLogger } from '../../src/platform/logger.js';
 
 const COMPONENT = 'STEngine';
 

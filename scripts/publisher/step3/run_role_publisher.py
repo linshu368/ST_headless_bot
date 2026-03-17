@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import json
 import os
@@ -63,9 +64,31 @@ def create_supabase_client() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def get_unpublished_roles(supabase: Client) -> List[Dict[str, Any]]:
+def get_unpublished_roles(
+    supabase: Client,
+    target_role_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """从 Supabase 获取未发布的角色"""
     try:
+        if target_role_id is not None:
+            response = (
+                supabase
+                .table(SUPABASE_TABLE)
+                .select("*")
+                .eq("role_id", target_role_id)
+                .execute()
+            )
+            roles = response.data or []
+            if not roles:
+                print(f"⚠️ 未找到 role_id={target_role_id} 的角色")
+                return []
+            role = roles[0]
+            if role.get("published_at"):
+                print(f"⚠️ role_id={target_role_id} 已发布，当前不允许重复发布")
+                return []
+            print(f"📌 指定发布角色: role_id={target_role_id}")
+            return [role]
+
         response = (
             supabase
             .table(SUPABASE_TABLE)
@@ -279,14 +302,17 @@ async def run_daily_publish(
     client: TelegramClient,
     channel: str,
     supabase: Client,
+    target_role_id: Optional[int] = None,
 ) -> None:
     daily_limit = DAILY_PUBLISH_AMOUNT if DAILY_PUBLISH_AMOUNT > 0 else None
-    if daily_limit:
+    if target_role_id is not None:
+        print(f"🎯 指定发布模式：role_id={target_role_id}")
+    elif daily_limit:
         print(f"🎯 启动每日限额模式：目标发布 {daily_limit} 个角色")
     else:
         print("ℹ️ DAILY_PUBLISH_AMOUNT 未配置或 <= 0，将发布所有未发布角色后退出")
 
-    roles = get_unpublished_roles(supabase)
+    roles = get_unpublished_roles(supabase, target_role_id=target_role_id)
     published_count = await publish_unpublished_roles(
         client,
         channel,
@@ -300,9 +326,21 @@ async def run_daily_publish(
     else:
         print("🏁 本轮未发布角色已处理完毕或无可发布角色")
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Publish roles to Telegram")
+    parser.add_argument(
+        "--role-id",
+        type=int,
+        default=None,
+        help="指定发布的角色 ID（仅未发布）",
+    )
+    return parser.parse_args()
+
+
 async def main() -> None:
     assert API_ID and API_HASH and SESSION_STRING, "Missing TG_API_ID/TG_API_HASH/TG_SESSION_STRING"
     channel = parse_channel_username(ROLE_CHANNEL_URL)
+    args = parse_args()
     
     # 初始化 Supabase 客户端
     supabase = create_supabase_client()
@@ -338,7 +376,7 @@ async def main() -> None:
         #         print(f"❌ 每日发布任务出错: {e}")
         #         print(f"⏰ 等待 {RETRY_INTERVAL_MINUTES} 分钟后重试...")
         #         await asyncio.sleep(RETRY_INTERVAL_MINUTES * 60)
-        await run_daily_publish(client, channel, supabase)
+        await run_daily_publish(client, channel, supabase, target_role_id=args.role_id)
 
 if __name__ == "__main__":
     asyncio.run(main())

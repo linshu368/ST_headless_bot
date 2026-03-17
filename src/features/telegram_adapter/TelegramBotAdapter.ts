@@ -437,7 +437,7 @@ export class TelegramBotAdapter {
                         await this._upsertUserSafe(userInfo);
                         await this._handleSnapshotPreview(chatId, snapshotId);
                     } else {
-                        logger.info({ kind: 'biz', component: COMPONENT, message: 'Start with tracking payload, treating as new user', meta: { payload } });
+                        logger.info({ kind: 'biz', component: COMPONENT, message: 'Start with tracking payload', meta: { payload } });
                         await this._handleDefaultStart(chatId, payload, userInfo);
                     }
                 } else {

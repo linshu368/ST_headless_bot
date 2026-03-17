@@ -13,8 +13,8 @@ import fs from 'fs';
 import path from 'path';
 import fetch, { Response } from 'node-fetch';
 import { ProxyAgent } from 'proxy-agent';
-import globalConfig from '../../platform/config.js';
-import { logger } from '../../platform/logger.js';
+import globalConfig from '../../src/platform/config.js';
+import { logger } from '../../src/platform/logger.js';
 
 const COMPONENT = 'FetchInterceptor';
 

@@ -77,3 +77,8 @@ ops/git/logs/
 
 # 忽略本地 npm 代理配置（防止部署环境使用本地代理）
 .npmrc
+
+#忽略暂时用不到的模块
+/payment-bot/
+/scripts/
+/tokenizers/

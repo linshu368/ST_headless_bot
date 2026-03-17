@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 
 
-ROLE_LIBRARY_FILENAME = "character_v2.json"
+ROLE_LIBRARY_FILENAME = "character_0313.json"
 
 
 def load_roles(file_path: Path) -> List[Dict[str, Any]]:

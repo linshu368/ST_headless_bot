@@ -20,7 +20,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # 图片文件夹路径 - 使用相对路径
-image_folder_path = os.path.join(os.path.dirname(__file__), "images_1212")
+image_folder_path = os.path.join(os.path.dirname(__file__), "images_0313")
 
 # 获取文件夹中的所有图片文件
 image_files = [f for f in os.listdir(image_folder_path) if f.endswith(".png")]
