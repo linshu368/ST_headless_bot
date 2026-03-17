@@ -52,11 +52,32 @@ export const DEFAULT_CONFIG: SrcCollectConfig = {
         'mock_data',
         'tokenizers',
         'node_modules',
+        'payment-service',
+        'repositories',
+        'ports',
     ],
 
     excludeFiles: [
         'transformers.js',
-        'ports/ISTEngine.js',
+        // ── 清单 A: Bot 运行时不使用 ──
+        'server_tg.ts',
+        // ── 清单 B: 运行时使用但对 diff 总结无帮助 ──
+        // 基础设施 — 外部服务客户端 / 数据映射
+        'infrastructure/supabase/SupabaseClient.ts',
+        'infrastructure/supabase/CharacterMapper.ts',
+        'infrastructure/redis/UpstashSessionStore.ts',
+        'infrastructure/payment/JLPaymentGateway.ts',
+        // 平台层 — 横切工具
+        'platform/logger.ts',
+        'platform/tracing.ts',
+        'platform/RequestTimer.ts',
+        // 类型定义
+        'types/payment.ts',
+        'types/config.ts',
+        // 领域类型 / 小型纯函数
+        'features/chat/domain/MessageLogRecord.ts',
+        'infrastructure/runtime_config/templateRenderer.ts',
+        'infrastructure/runtime_config/RuntimeConfigSchema.ts',
     ],
 };
 
