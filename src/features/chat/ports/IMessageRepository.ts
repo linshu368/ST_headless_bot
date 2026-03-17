@@ -2,14 +2,14 @@ import type { MessageLogRecord } from '../domain/MessageLogRecord.js';
 
 export interface OpenRouterStats {
     model: string;
-    generation_time: number; // seconds
-    latency: number; // seconds
-    native_tokens_prompt: number;
-    native_tokens_completion: number;
-    native_tokens_reasoning: number;
-    native_tokens_cached: number;
-    cache_discount: number;
-    usage: number; // cost
+    generation_time: number | 'failed'; // seconds
+    latency: number | 'failed'; // seconds
+    native_tokens_prompt: number | 'failed';
+    native_tokens_completion: number | 'failed';
+    native_tokens_reasoning: number | 'failed';
+    native_tokens_cached: number | 'failed';
+    cache_discount: number | 'failed';
+    usage: number | 'failed'; // cost
     finish_reason: string;
     provider_name: string;
 }

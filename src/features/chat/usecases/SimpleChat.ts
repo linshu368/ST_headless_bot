@@ -571,7 +571,7 @@ export class SimpleChat {
         try {
             const statsUrl = `https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(generationId)}`;
             const maxAttempts = 6;
-            const retryDelayMs = 1500;
+            const retryDelayMs = 2000;
             let stats: any = null;
 
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -588,13 +588,10 @@ export class SimpleChat {
                     break;
                 }
 
-                if (response.status === 404 && attempt < maxAttempts) {
+                logger.warn({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats fetch failed', meta: { status: response.status, attempt } });
+                if (attempt < maxAttempts) {
                     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-                    continue;
                 }
-
-                logger.warn({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats fetch failed', meta: { status: response.status } });
-                return;
             }
 
             if (stats) {
@@ -612,6 +609,21 @@ export class SimpleChat {
                     provider_name: stats.provider_name
                 });
                 logger.info({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats backfilled', meta: { messageId, generationId } });
+            } else {
+                await this.messageRepository.updateMessageStats(messageId, {
+                    model: 'failed',
+                    generation_time: 'failed',
+                    latency: 'failed',
+                    native_tokens_prompt: 'failed',
+                    native_tokens_completion: 'failed',
+                    native_tokens_reasoning: 'failed',
+                    native_tokens_cached: 'failed',
+                    cache_discount: 'failed',
+                    usage: 'failed',
+                    finish_reason: 'failed',
+                    provider_name: 'failed'
+                });
+                logger.warn({ kind: 'infra', component: COMPONENT, message: 'OpenRouter stats backfill failed after retries', meta: { messageId, generationId } });
             }
         } catch (error) {
             logger.error({ kind: 'infra', component: COMPONENT, message: 'Error backfilling OpenRouter stats', error });
