@@ -139,8 +139,11 @@ export class PipelineChannel implements IAIChannel {
                 }
             }
         } finally {
+            // Fire-and-forget: don't block the caller (Step 2 startup) on stream cleanup.
+            // The actual HTTP connection is severed by engine.abort() in the catch block;
+            // this just lets the generator's internal finally run in the background.
             if (iterator.return) {
-                await iterator.return();
+                iterator.return().catch(() => {});
             }
         }
     }
@@ -273,6 +276,10 @@ export class PipelineChannel implements IAIChannel {
                 }
 
             } catch (error) {
+                // Immediately sever the underlying HTTP connection so the failed
+                // step's TCP socket is released and doesn't linger as a zombie.
+                engine.abort();
+
                 logger.warn({ 
                     kind: 'infra', 
                     component: 'PipelineChannel', 
