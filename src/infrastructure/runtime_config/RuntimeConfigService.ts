@@ -374,6 +374,16 @@ export class RuntimeConfigService {
         return this.get<string>('insufficient_credits_message', '星尘不足啦，唤醒更多星尘，让故事继续......');
     }
 
+    /** 获取 P0 崩溃级兜底文案 */
+    async getP0FallbackMessage(): Promise<string> {
+        return this.get<string>('fallback_message_p0', config.fallbackMessages.p0);
+    }
+
+    /** 获取 P1 级兜底文案 */
+    async getP1FallbackMessage(): Promise<string> {
+        return this.get<string>('fallback_message_p1', config.fallbackMessages.p1);
+    }
+
     /** 获取流式首次上屏字符数 */
     async getStreamingFirstUpdateChars(): Promise<number> {
         return this.get<number>('streaming_first_update_chars', config.streaming.firstUpdateChars);

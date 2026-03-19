@@ -146,7 +146,7 @@ export class SimpleChat {
                 error  // 传入原始错误对象
             });
             // 错误处理规约：返回固定错误提示，不崩溃
-            return "我好像走神了... (Generation Error)";
+            return await runtimeConfig.getP1FallbackMessage();
         }
 
         if (replyText) {
@@ -167,7 +167,7 @@ export class SimpleChat {
             return cleanedReply;
         } else {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Generation returned empty' });
-            return "收到空回复...";
+            return await runtimeConfig.getP1FallbackMessage();
         }
     }
 
@@ -235,7 +235,7 @@ export class SimpleChat {
         if (!lastUserContent) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Regenerate failed: No user message found' });
             yield { 
-                text: "无法重新生成：找不到上一条用户消息。", 
+                text: await runtimeConfig.getP1FallbackMessage(), 
                 isFirst: true, 
                 isFinal: true 
             };

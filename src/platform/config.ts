@@ -73,6 +73,14 @@ export interface Config {
         botServiceUrl: string;
         creditsPlans: { credits: number; priceCNY: number }[];
     };
+    alerts: {
+        feishuWebhookUrl: string;
+        feishuWebhookSecret: string;
+    };
+    fallbackMessages: {
+        p0: string;
+        p1: string;
+    };
 }
 
 const config: Config = {
@@ -146,6 +154,14 @@ const config: Config = {
             { credits: 11800, priceCNY: 98 },
             { credits: 42800, priceCNY: 328 },
         ],
+    },
+    alerts: {
+        feishuWebhookUrl: process.env.FEISHU_WEBHOOK_URL || '',
+        feishuWebhookSecret: process.env.FEISHU_WEBHOOK_SECRET || '',
+    },
+    fallbackMessages: {
+        p0: process.env.FALLBACK_MESSAGE_P0 || '抱歉，系统暂时出现故障，请稍后再试。',
+        p1: process.env.FALLBACK_MESSAGE_P1 || '请重试',
     },
     // --- 运行时配置 (已迁移至 Supabase runtime_config 表) ---
     // 以下为静态 fallback 默认值，仅在 Supabase + Redis 均不可用时启用
