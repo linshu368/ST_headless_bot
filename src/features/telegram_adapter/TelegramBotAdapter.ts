@@ -22,6 +22,7 @@ import { calculateCreditsFromRecharge, formatCredits } from '../payment/domain/r
 import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
 import type { InternalPaymentEvent } from '../../types/payment.js';
 import { SupabasePaymentOrderRepository } from '../../infrastructure/repositories/SupabasePaymentOrderRepository.js';
+import { feishuAlert, AlertType } from '../../infrastructure/alerts/FeishuAlertService.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -1181,6 +1182,20 @@ export class TelegramBotAdapter {
                 kind: 'biz', component: COMPONENT,
                 message: 'Payment completed but credits addition FAILED — requires attention',
                 meta: { userId, orderId }
+            });
+            feishuAlert.sendP1({
+                alertType: AlertType.CREDIT_DEPOSIT_FAILURE,
+                message: `支付已完成但积分入账失败！用户 ${userId} 的 ${mainCredits} 主积分 + ${bonusCredits} 赠送积分未到账`,
+                error: new Error('addCredits returned false'),
+                userId,
+                meta: {
+                    orderId,
+                    amount: amountNum,
+                    mainCredits,
+                    bonusCredits,
+                    paymentType,
+                    providerTransactionId,
+                },
             });
             return;
         }

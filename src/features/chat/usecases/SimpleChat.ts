@@ -17,6 +17,7 @@ import { getTraceId } from '../../../platform/tracing.js';
 import type { ICreditsRepository } from '../../credits/ports/ICreditsRepository.js';
 import { getCostForTier, getTotalBalance, hasEnoughCredits, InsufficientCreditsError } from '../../credits/rules/creditCost.js';
 import type { SupabaseUserRepository } from '../../../infrastructure/repositories/SupabaseUserRepository.js';
+import { feishuAlert, AlertType } from '../../../infrastructure/alerts/FeishuAlertService.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -507,6 +508,15 @@ export class SimpleChat {
                 }
             }).catch(err => {
                 logger.error({ kind: 'infra', component: COMPONENT, message: 'Message persistence failed', error: err });
+                feishuAlert.sendP1({
+                    alertType: AlertType.HISTORY_SAVE_FAILURE,
+                    message: '对话消息持久化到 Supabase 失败',
+                    error: err,
+                    userId,
+                    userInput,
+                    traceId: getTraceId(),
+                    meta: { sessionId: session.sessionId, model: executionTrace.model },
+                });
             });
 
             this.userRepository?.incrementTotalRound(userId).catch(err => {

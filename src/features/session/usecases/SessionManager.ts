@@ -12,6 +12,7 @@ import { SupabaseSnapshotRepository, type ChatSnapshot } from '../../../infrastr
 import { mapDbRowToCharacterV2, type RoleDataRow } from '../../../infrastructure/supabase/CharacterMapper.js';
 import { supabase } from '../../../infrastructure/supabase/SupabaseClient.js';
 import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
+import { feishuAlert, AlertType } from '../../../infrastructure/alerts/FeishuAlertService.js';
 
 const COMPONENT = 'SessionManager';
 
@@ -426,6 +427,13 @@ export class SessionManager {
                 message: 'Failed to persist session history',
                 error,
             });
+            feishuAlert.sendP1({
+                alertType: AlertType.HISTORY_SAVE_FAILURE,
+                message: '用户对话历史追加到 Redis 失败，本轮对话记录可能丢失',
+                error,
+                userId: session.userId,
+                meta: { sessionId: session.sessionId, messageCount: messages.length },
+            });
         }
     }
 
@@ -487,7 +495,13 @@ export class SessionManager {
                     message: 'Failed to persist rolled back history',
                     error,
                 });
-                // We proceed even if persistence fails, though it might lead to inconsistency on next reload
+                feishuAlert.sendP1({
+                    alertType: AlertType.HISTORY_SAVE_FAILURE,
+                    message: '重新生成时历史回滚写入 Redis 失败，可能导致下次加载出现不一致',
+                    error,
+                    userId: session.userId,
+                    meta: { sessionId: session.sessionId, keptCount: session.history.length },
+                });
             }
         }
 

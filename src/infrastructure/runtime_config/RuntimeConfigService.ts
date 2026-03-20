@@ -17,9 +17,12 @@ import type { AIChannelConfig, TierMappingConfig } from '../../types/config.js';
 import type { CreditsPlan } from '../../types/payment.js';
 import { RuntimeConfigSchema } from './RuntimeConfigSchema.js';
 import type { StreamScheduleConfig } from '../../features/chat/rules/streamingSchedule.js';
+import { feishuAlert, AlertType } from '../alerts/FeishuAlertService.js';
 
 const COMPONENT = 'RuntimeConfig';
 const REDIS_KEY_PREFIX = 'runtime_config';
+
+const ALERT_CONFIG_KEYS = new Set(['ai_config_source', 'payment_credits_plans']);
 
 /** 支付文案模板的静态降级默认值（Layer 3 兜底） */
 const PAYMENT_TEMPLATE_FALLBACKS: Record<string, string> = {
@@ -109,6 +112,10 @@ export class RuntimeConfigService {
     private refreshTimer: NodeJS.Timeout | null = null;
     private refreshInFlight = false;
 
+    private supabaseConsecutiveFailures = 0;
+    private readonly SUPABASE_FAILURE_THRESHOLD = 3;
+    private supabaseConnectionLostAlerted = false;
+
     private constructor() {
         this.baseUrl = (config.redis.restUrl || '').replace(/\/+$/, '');
         this.headers = {
@@ -162,6 +169,14 @@ export class RuntimeConfigService {
                 }
             } catch (error) {
                 logger.warn({ kind: 'infra', component: COMPONENT, message: `Redis read/parse failed for ${key}`, error });
+                if (ALERT_CONFIG_KEYS.has(key)) {
+                    feishuAlert.sendP1({
+                        alertType: AlertType.CHANNEL_CONFIG_PARSE_ERROR,
+                        message: `运行时配置 "${key}" 从 Redis 读取/解析失败，将尝试 Supabase 降级`,
+                        error,
+                        meta: { configKey: key, source: 'redis' },
+                    });
+                }
             }
         }
 
@@ -222,6 +237,14 @@ export class RuntimeConfigService {
                 }
             } catch (error) {
                 logger.warn({ kind: 'infra', component: COMPONENT, message: `Supabase read failed for ${key}`, error });
+                if (ALERT_CONFIG_KEYS.has(key)) {
+                    feishuAlert.sendP1({
+                        alertType: AlertType.CHANNEL_CONFIG_PARSE_ERROR,
+                        message: `运行时配置 "${key}" 从 Supabase 读取/解析失败，将降级到静态兜底值`,
+                        error,
+                        meta: { configKey: key, source: 'supabase' },
+                    });
+                }
             } finally {
                 if (lockAcquired) {
                     this.releaseLock(key).catch(() => {});
@@ -254,6 +277,19 @@ export class RuntimeConfigService {
         this.refreshTimer.unref();
     }
 
+    private _checkSupabaseConnectionLost(error: unknown): void {
+        if (this.supabaseConsecutiveFailures >= this.SUPABASE_FAILURE_THRESHOLD
+            && !this.supabaseConnectionLostAlerted) {
+            this.supabaseConnectionLostAlerted = true;
+            feishuAlert.sendP0({
+                alertType: AlertType.SUPABASE_CONNECTION_LOST,
+                message: `Supabase 定时刷新连续 ${this.supabaseConsecutiveFailures} 个周期失败（~${this.supabaseConsecutiveFailures} 分钟），判定连接断开`,
+                error,
+                meta: { consecutiveFailures: this.supabaseConsecutiveFailures },
+            });
+        }
+    }
+
     private async refreshAllToRedis(): Promise<void> {
         if (!supabase || !this.redisEnabled) return;
         if (!(await this.acquireLock('refresh_all'))) return;
@@ -266,6 +302,8 @@ export class RuntimeConfigService {
                 .select('key,value,text_value,version,updated_at');
 
             if (error) {
+                this.supabaseConsecutiveFailures++;
+                this._checkSupabaseConnectionLost(new Error(error.message));
                 logger.warn({
                     kind: 'infra',
                     component: COMPONENT,
@@ -282,6 +320,12 @@ export class RuntimeConfigService {
                     message: 'Periodic refresh found no runtime_config rows',
                 });
                 return;
+            }
+
+            this.supabaseConsecutiveFailures = 0;
+            if (this.supabaseConnectionLostAlerted) {
+                this.supabaseConnectionLostAlerted = false;
+                logger.info({ kind: 'sys', component: COMPONENT, message: 'Supabase connection recovered' });
             }
 
             const ttlSeconds = Math.floor(CACHE_TTL_MS / 1000);
@@ -308,6 +352,14 @@ export class RuntimeConfigService {
                         message: `Periodic refresh skipped invalid config: ${row.key}`,
                         error,
                     });
+                    if (ALERT_CONFIG_KEYS.has(row.key)) {
+                        feishuAlert.sendP1({
+                            alertType: AlertType.CHANNEL_CONFIG_PARSE_ERROR,
+                            message: `定时刷新：配置 "${row.key}" 解析失败，该行已跳过`,
+                            error,
+                            meta: { configKey: row.key, source: 'periodic_refresh' },
+                        });
+                    }
                 }
             }
 
@@ -318,6 +370,8 @@ export class RuntimeConfigService {
                 meta: { count: data.length },
             });
         } catch (error) {
+            this.supabaseConsecutiveFailures++;
+            this._checkSupabaseConnectionLost(error);
             logger.warn({
                 kind: 'infra',
                 component: COMPONENT,

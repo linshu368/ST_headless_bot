@@ -1,5 +1,6 @@
 import { logger } from '../../platform/logger.js';
 import type { SessionMessage, SessionStore } from '../../core/ports/SessionStore.js';
+import { feishuAlert, AlertType } from '../alerts/FeishuAlertService.js';
 
 type UpstashResponse = {
     result?: unknown;
@@ -16,6 +17,10 @@ export class UpstashSessionStore implements SessionStore {
     private maxHistoryItems: number;
     private historyRetentionCount: number;
     private readonly debugEnabled: boolean;
+
+    private consecutiveFailures = 0;
+    private readonly FAILURE_THRESHOLD = 5;
+    private connectionLostAlerted = false;
 
     constructor(params: {
         restUrl: string;
@@ -116,43 +121,63 @@ export class UpstashSessionStore implements SessionStore {
         let url = '';
         let response: Response;
 
-        if (command === 'get') {
-            if (args.length < 2) {
-                throw new Error('GET requires key');
+        try {
+            if (command === 'get') {
+                if (args.length < 2) {
+                    throw new Error('GET requires key');
+                }
+                const key = this.encode(String(args[1]));
+                url = `${this.baseUrl}/get/${key}`;
+                response = await fetch(url, { headers: this.headers });
+            } else if (command === 'set') {
+                if (args.length < 3) {
+                    throw new Error('SET requires key and value');
+                }
+                const key = this.encode(String(args[1]));
+                url = `${this.baseUrl}/set/${key}`;
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers: this.headers,
+                    body: JSON.stringify({ value: args[2] }),
+                });
+            } else {
+                const encodedArgs = args.slice(1).map((value) => this.encode(String(value)));
+                url = `${this.baseUrl}/${command}`;
+                if (encodedArgs.length > 0) {
+                    url = `${url}/${encodedArgs.join('/')}`;
+                }
+                response = await fetch(url, { method: 'POST', headers: this.headers });
             }
-            const key = this.encode(String(args[1]));
-            url = `${this.baseUrl}/get/${key}`;
-            response = await fetch(url, { headers: this.headers });
-        } else if (command === 'set') {
-            if (args.length < 3) {
-                throw new Error('SET requires key and value');
-            }
-            const key = this.encode(String(args[1]));
-            url = `${this.baseUrl}/set/${key}`;
-            response = await fetch(url, {
-                method: 'POST',
-                headers: this.headers,
-                body: JSON.stringify({ value: args[2] }),
-            });
-        } else {
-            const encodedArgs = args.slice(1).map((value) => this.encode(String(value)));
-            url = `${this.baseUrl}/${command}`;
-            if (encodedArgs.length > 0) {
-                url = `${url}/${encodedArgs.join('/')}`;
-            }
-            response = await fetch(url, { method: 'POST', headers: this.headers });
-        }
 
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Upstash error ${response.status}: ${text}`);
-        }
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`Upstash error ${response.status}: ${text}`);
+            }
 
-        const data = (await response.json()) as UpstashResponse;
-        if (data && typeof data === 'object' && data.error) {
-            throw new Error(String(data.error));
+            const data = (await response.json()) as UpstashResponse;
+            if (data && typeof data === 'object' && data.error) {
+                throw new Error(String(data.error));
+            }
+
+            this.consecutiveFailures = 0;
+            if (this.connectionLostAlerted) {
+                this.connectionLostAlerted = false;
+                logger.info({ kind: 'sys', component: COMPONENT, message: 'Redis connection recovered' });
+            }
+            return data;
+        } catch (error) {
+            this.consecutiveFailures++;
+            if (this.consecutiveFailures >= this.FAILURE_THRESHOLD && !this.connectionLostAlerted) {
+                this.connectionLostAlerted = true;
+                feishuAlert.sendP0({
+                    alertType: AlertType.REDIS_CONNECTION_LOST,
+                    message: `Redis (Upstash) 连续 ${this.consecutiveFailures} 次请求失败，判定连接断开`,
+                    error,
+                    meta: { consecutiveFailures: this.consecutiveFailures, lastCommand: command },
+                });
+            }
+            throw error;
         }
-        return data;
     }
 
     private unwrapResult(value: unknown): unknown {
