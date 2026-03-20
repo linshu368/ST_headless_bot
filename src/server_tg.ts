@@ -1,6 +1,8 @@
 import config from './platform/config.js';
 import { TelegramBotAdapter } from './features/telegram_adapter/TelegramBotAdapter.js';
 import { setupGlobalErrorHandlers } from './infrastructure/globalErrorHandler.js';
+import { feishuAlert, AlertType } from './infrastructure/alerts/FeishuAlertService.js';
+import { logger } from './platform/logger.js';
 import { createServer } from 'node:http';
 
 // 初始化全局崩溃告警
@@ -10,7 +12,11 @@ async function main() {
     console.log('=== SillyTavern Telegram Bot Service ===');
     
     if (!config.telegram.token) {
-        console.error('ERROR: TELEGRAM_BOT_TOKEN is not set in .env');
+        logger.error({ kind: 'sys', component: 'Main', message: 'TELEGRAM_BOT_TOKEN is not set' });
+        await feishuAlert.sendP0Critical({
+            alertType: AlertType.BOOT_MISSING_TOKEN,
+            message: 'TELEGRAM_BOT_TOKEN 环境变量未配置，Bot 服务无法启动。需要检查 Railway 环境变量配置。',
+        });
         process.exit(1);
     }
 
@@ -49,10 +55,14 @@ async function main() {
         });
 
     } catch (error) {
-        console.error('Failed to start bot:', error);
+        logger.error({ kind: 'sys', component: 'Main', message: 'Failed to start bot', error });
+        await feishuAlert.sendP0Critical({
+            alertType: AlertType.BOOT_INIT_FAILURE,
+            message: 'adapter.start() 或 health server 启动过程中抛出异常，Bot 服务无法启动。',
+            error,
+        });
         process.exit(1);
     }
 }
 
 main();
-

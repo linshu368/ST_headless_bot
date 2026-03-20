@@ -6,8 +6,49 @@ const COMPONENT = 'FeishuAlertService';
 
 export type AlertLevel = 'P0' | 'P1';
 
+export enum AlertType {
+    // P0 — 致命级
+    UNCAUGHT_EXCEPTION      = 'UNCAUGHT_EXCEPTION',
+    UNHANDLED_REJECTION     = 'UNHANDLED_REJECTION',
+    BOOT_MISSING_TOKEN      = 'BOOT_MISSING_TOKEN',
+    BOOT_INIT_FAILURE       = 'BOOT_INIT_FAILURE',
+    REDIS_CONNECTION_LOST   = 'REDIS_CONNECTION_LOST',
+    SUPABASE_CONNECTION_LOST = 'SUPABASE_CONNECTION_LOST',
+
+    // P1 — 严重级
+    AI_STREAM_FAILURE       = 'AI_STREAM_FAILURE',
+    AI_ALL_CHANNELS_DOWN    = 'AI_ALL_CHANNELS_DOWN',
+    PAYMENT_CALLBACK_ERROR  = 'PAYMENT_CALLBACK_ERROR',
+    CHANNEL_CONFIG_PARSE_ERROR = 'CHANNEL_CONFIG_PARSE_ERROR',
+    HISTORY_SAVE_FAILURE    = 'HISTORY_SAVE_FAILURE',
+    CREDIT_DEPOSIT_FAILURE  = 'CREDIT_DEPOSIT_FAILURE',
+
+    UNKNOWN                 = 'UNKNOWN',
+}
+
+const DEFAULT_TITLES: Record<AlertType, string> = {
+    // P0
+    [AlertType.UNCAUGHT_EXCEPTION]:       'Bot 进程致命崩溃 (Uncaught Exception)',
+    [AlertType.UNHANDLED_REJECTION]:      'Bot 进程致命崩溃 (Unhandled Rejection)',
+    [AlertType.BOOT_MISSING_TOKEN]:       'Bot 启动失败 — 缺少 TELEGRAM_BOT_TOKEN',
+    [AlertType.BOOT_INIT_FAILURE]:        'Bot 启动失败 — 初始化异常',
+    [AlertType.REDIS_CONNECTION_LOST]:    'Redis 连接完全断开',
+    [AlertType.SUPABASE_CONNECTION_LOST]: 'Supabase 数据库连接完全断开',
+
+    // P1
+    [AlertType.AI_STREAM_FAILURE]:          'AI 流式响应异常',
+    [AlertType.AI_ALL_CHANNELS_DOWN]:       'AI 全通道不可用',
+    [AlertType.PAYMENT_CALLBACK_ERROR]:     '支付回调处理异常',
+    [AlertType.CHANNEL_CONFIG_PARSE_ERROR]: '渠道/模型配置解析失败',
+    [AlertType.HISTORY_SAVE_FAILURE]:       '用户历史记录保存或回滚失败',
+    [AlertType.CREDIT_DEPOSIT_FAILURE]:     '充值成功但积分未到账',
+
+    [AlertType.UNKNOWN]:                    '未分类告警',
+};
+
 export interface AlertContext {
-    title: string;
+    alertType: AlertType;
+    title?: string;
     message: string;
     error?: Error | unknown;
     traceId?: string;
@@ -17,9 +58,10 @@ export interface AlertContext {
 }
 
 interface AlertRecord {
-    count: number;
-    firstSeen: number;
-    lastSeen: number;
+    level: AlertLevel;
+    displayTitle: string;
+    pendingCount: number;
+    timer: ReturnType<typeof setTimeout> | null;
 }
 
 class FeishuAlertService {
@@ -27,12 +69,10 @@ class FeishuAlertService {
     private webhookUrl: string;
     private webhookSecret: string;
     
-    // 防抖记录器：key -> AlertRecord
     private alertRecords: Map<string, AlertRecord> = new Map();
     
-    // 防抖时间配置
-    private readonly DEBOUNCE_MS_P0 = 3 * 60 * 1000;  // P0: 3分钟
-    private readonly DEBOUNCE_MS_P1 = 10 * 60 * 1000; // P1: 10分钟
+    private readonly AGGREGATE_MS_P0 = 15 * 60 * 1000; // P0: 15分钟聚合周期
+    private readonly AGGREGATE_MS_P1 = 20 * 60 * 1000; // P1: 20分钟聚合周期
 
     private constructor() {
         this.webhookUrl = config.alerts.feishuWebhookUrl;
@@ -50,78 +90,112 @@ class FeishuAlertService {
     }
 
     /**
-     * 异步发送 P0 崩溃级告警
-     * 响应要求：放下手里任何事情立刻处理。
+     * 异步发送 P0 崩溃级告警（fire-and-forget，不阻塞调用方）
      */
     async sendP0(context: AlertContext): Promise<void> {
-        // Fire and forget, 不阻塞主线程
         this.processAlert('P0', context).catch(err => {
             logger.error({ kind: 'sys', component: COMPONENT, message: 'Failed to process P0 alert', error: err });
         });
     }
 
     /**
-     * 异步发送 P1 严重级告警
-     * 响应要求：工作时间内2小时内处理，不需要半夜叫人。
+     * 同步等待发送 P0 告警，用于进程即将退出的场景。
+     * 绕过聚合逻辑，直接发送并等待 HTTP 响应返回。
+     */
+    async sendP0Critical(context: AlertContext): Promise<void> {
+        if (!this.webhookUrl) return;
+        await this.dispatchToFeishu('P0', { ...context, title: this.resolveTitle(context) });
+    }
+
+    /**
+     * 异步发送 P1 严重级告警（fire-and-forget，不阻塞调用方）
      */
     async sendP1(context: AlertContext): Promise<void> {
-        // Fire and forget, 不阻塞主线程
         this.processAlert('P1', context).catch(err => {
             logger.error({ kind: 'sys', component: COMPONENT, message: 'Failed to process P1 alert', error: err });
         });
     }
 
+    private resolveTitle(context: AlertContext): string {
+        return context.title || DEFAULT_TITLES[context.alertType] || DEFAULT_TITLES[AlertType.UNKNOWN];
+    }
+
     private async processAlert(level: AlertLevel, context: AlertContext): Promise<void> {
         if (!this.webhookUrl) return;
 
-        const signature = `${level}:${context.title}`;
-        const now = Date.now();
-        const debounceMs = level === 'P0' ? this.DEBOUNCE_MS_P0 : this.DEBOUNCE_MS_P1;
+        const key = `${level}:${context.alertType}`;
+        const record = this.alertRecords.get(key);
 
-        let record = this.alertRecords.get(signature);
-        
         if (record) {
-            record.count += 1;
-            record.lastSeen = now;
-            
-            // 如果在防抖窗口内，只累加次数，不发送
-            if (now - record.firstSeen < debounceMs) {
-                logger.debug({ kind: 'sys', component: COMPONENT, message: `Alert debounced (suppressed): ${signature}, count: ${record.count}` });
-                return;
-            }
-            
-            // 超过防抖窗口，准备发送聚合信息，并重置窗口
-            context.meta = {
-                ...context.meta,
-                _aggregated_info: `⚠️ 过去 ${Math.round(debounceMs / 60000)} 分钟内，同类报错共发生 ${record.count} 次`
-            };
-            
-            // 重置记录
-            record.count = 1;
-            record.firstSeen = now;
-            record.lastSeen = now;
-        } else {
-            // 第一次出现
-            this.alertRecords.set(signature, {
-                count: 1,
-                firstSeen: now,
-                lastSeen: now
-            });
+            record.pendingCount += 1;
+            logger.debug({ kind: 'sys', component: COMPONENT, message: `Alert aggregating: ${key}, pendingCount: ${record.pendingCount}` });
+            return;
         }
 
-        await this.dispatchToFeishu(level, context);
+        const displayTitle = this.resolveTitle(context);
+        this.alertRecords.set(key, {
+            level,
+            displayTitle,
+            pendingCount: 0,
+            timer: null,
+        });
+        this.startAggregationTimer(key);
+
+        await this.dispatchToFeishu(level, { ...context, title: displayTitle });
+    }
+
+    private startAggregationTimer(key: string): void {
+        const record = this.alertRecords.get(key);
+        if (!record) return;
+
+        const windowMs = record.level === 'P0' ? this.AGGREGATE_MS_P0 : this.AGGREGATE_MS_P1;
+
+        record.timer = setTimeout(async () => {
+            const rec = this.alertRecords.get(key);
+            if (!rec) return;
+
+            if (rec.pendingCount === 0) {
+                this.alertRecords.delete(key);
+                logger.debug({ kind: 'sys', component: COMPONENT, message: `Aggregation window expired with no new errors, cleared: ${key}` });
+                return;
+            }
+
+            const count = rec.pendingCount;
+            rec.pendingCount = 0;
+
+            const windowMin = Math.round(windowMs / 60000);
+            const aggContext: AlertContext = {
+                alertType: key.split(':')[1] as AlertType,
+                title: rec.displayTitle,
+                message: `定时聚合上报：过去 ${windowMin} 分钟内，同类报错又发生了 ${count} 次`,
+                meta: {
+                    _aggregated_info: `⚠️ 过去 ${windowMin} 分钟内，同类报错又发生了 ${count} 次`,
+                },
+            };
+
+            try {
+                await this.dispatchToFeishu(rec.level, aggContext);
+            } catch (err) {
+                logger.error({ kind: 'sys', component: COMPONENT, message: 'Failed to send aggregated alert', error: err });
+            }
+
+            this.startAggregationTimer(key);
+        }, windowMs);
+
+        if (record.timer && typeof record.timer === 'object' && 'unref' in record.timer) {
+            record.timer.unref();
+        }
     }
 
     private async dispatchToFeishu(level: AlertLevel, context: AlertContext): Promise<void> {
         const isP0 = level === 'P0';
         const headerColor = isP0 ? 'red' : 'orange';
-        const headerTitle = isP0 ? `🚨 线上服务报警：${context.title}` : `🟠 P1 严重报警：${context.title}`;
+        const displayTitle = context.title || DEFAULT_TITLES[context.alertType] || DEFAULT_TITLES[AlertType.UNKNOWN];
+        const headerTitle = isP0 ? `🚨 线上服务报警：${displayTitle}` : `🟠 P1 严重报警：${displayTitle}`;
 
-        // 格式化时间
         const now = new Date();
         const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
-        // 提取错误摘要
         let errorSummary = '未知错误';
         let errorStack = '';
         if (context.error) {
@@ -134,7 +208,6 @@ class FeishuAlertService {
             }
         }
 
-        // 构建卡片内容 Markdown
         let contentMd = `**⏰ 发生时间:**\n${timeStr}\n`;
         
         if (context.traceId) {
@@ -146,7 +219,6 @@ class FeishuAlertService {
         }
         
         if (context.userInput) {
-            // 截断过长的用户输入
             const inputPreview = context.userInput.length > 100 ? context.userInput.substring(0, 100) + '...' : context.userInput;
             contentMd += `**💬 用户当时发了什么:**\n"${inputPreview}"\n`;
         }
@@ -171,11 +243,8 @@ class FeishuAlertService {
             }
         ];
 
-        // 堆栈信息 (折叠面板)
         if (errorStack) {
             const stackPreview = errorStack.length > 500 ? errorStack.substring(0, 500) + '\n... (truncated)' : errorStack;
-            
-            // 飞书不支持原生的折叠面板，我们用 hr 分割线 + 明确的标题来模拟
             elements.push({
                 tag: 'hr'
             });
@@ -188,7 +257,6 @@ class FeishuAlertService {
             });
         }
 
-        // 其他上下文信息
         const otherMeta = { ...context.meta };
         delete otherMeta._aggregated_info;
         if (Object.keys(otherMeta).length > 0) {
@@ -222,7 +290,6 @@ class FeishuAlertService {
             }
         };
 
-        // 飞书自定义机器人签名校验
         if (this.webhookSecret) {
             const timestamp = Math.floor(Date.now() / 1000).toString();
             const signStr = `${timestamp}\n${this.webhookSecret}`;
