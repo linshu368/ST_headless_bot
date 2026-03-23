@@ -3,8 +3,31 @@ import { logger } from '../platform/logger.js';
 
 const COMPONENT = 'GlobalErrorHandler';
 
+const TRANSIENT_NETWORK_PATTERNS = [
+    'ETIMEDOUT',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'socket disconnected',
+    'socket hang up',
+    'EFATAL',
+];
+
+function isTransientNetworkError(err: unknown): boolean {
+    const msg = err instanceof Error
+        ? `${err.name} ${err.message} ${err.stack ?? ''}`
+        : String(err);
+    return TRANSIENT_NETWORK_PATTERNS.some(p => msg.includes(p));
+}
+
 export function setupGlobalErrorHandlers() {
     process.on('uncaughtException', (error: Error) => {
+        if (isTransientNetworkError(error)) {
+            logger.warn({ kind: 'sys', component: COMPONENT, message: 'Transient network error (ignored, not fatal)', error: error.message });
+            return;
+        }
+
         logger.error({ kind: 'sys', component: COMPONENT, message: 'Uncaught Exception', error });
         
         feishuAlert.sendP0({
@@ -19,6 +42,11 @@ export function setupGlobalErrorHandlers() {
     });
 
     process.on('unhandledRejection', (reason: unknown, promise: Promise<any>) => {
+        if (isTransientNetworkError(reason)) {
+            logger.warn({ kind: 'sys', component: COMPONENT, message: 'Transient network error in rejected promise (ignored, not fatal)', error: reason instanceof Error ? reason.message : String(reason) });
+            return;
+        }
+
         logger.error({ kind: 'sys', component: COMPONENT, message: 'Unhandled Rejection', error: reason });
 
         feishuAlert.sendP0({

@@ -16,9 +16,6 @@ export enum AlertType {
     SUPABASE_CONNECTION_LOST = 'SUPABASE_CONNECTION_LOST',
 
     // P1 — 严重级
-    AI_STREAM_FAILURE       = 'AI_STREAM_FAILURE',
-    AI_ALL_CHANNELS_DOWN    = 'AI_ALL_CHANNELS_DOWN',
-    PAYMENT_CALLBACK_ERROR  = 'PAYMENT_CALLBACK_ERROR',
     CHANNEL_CONFIG_PARSE_ERROR = 'CHANNEL_CONFIG_PARSE_ERROR',
     HISTORY_SAVE_FAILURE    = 'HISTORY_SAVE_FAILURE',
     CREDIT_DEPOSIT_FAILURE  = 'CREDIT_DEPOSIT_FAILURE',
@@ -36,9 +33,6 @@ const DEFAULT_TITLES: Record<AlertType, string> = {
     [AlertType.SUPABASE_CONNECTION_LOST]: 'Supabase 数据库连接完全断开',
 
     // P1
-    [AlertType.AI_STREAM_FAILURE]:          'AI 流式响应异常',
-    [AlertType.AI_ALL_CHANNELS_DOWN]:       'AI 全通道不可用',
-    [AlertType.PAYMENT_CALLBACK_ERROR]:     '支付回调处理异常',
     [AlertType.CHANNEL_CONFIG_PARSE_ERROR]: '渠道/模型配置解析失败',
     [AlertType.HISTORY_SAVE_FAILURE]:       '用户历史记录保存或回滚失败',
     [AlertType.CREDIT_DEPOSIT_FAILURE]:     '充值成功但积分未到账',
