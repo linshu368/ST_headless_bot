@@ -18,6 +18,7 @@ import type { ICreditsRepository } from '../../credits/ports/ICreditsRepository.
 import { getCostForTier, getTotalBalance, hasEnoughCredits, InsufficientCreditsError } from '../../credits/rules/creditCost.js';
 import type { SupabaseUserRepository } from '../../../infrastructure/repositories/SupabaseUserRepository.js';
 import { feishuAlert, AlertType } from '../../../infrastructure/alerts/FeishuAlertService.js';
+import { metrics } from '../../../infrastructure/metrics/MetricsCollector.js';
 
 const COMPONENT = 'SimpleChat';
 
@@ -186,6 +187,7 @@ export class SimpleChat {
     }> {
         const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Streaming chat started' });
+        metrics.incrementTotalRequests();
 
         const session = await this.sessionManager.getOrCreateSession(userId, timer);
 
@@ -227,6 +229,7 @@ export class SimpleChat {
     }> {
         const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Regenerating chat started' });
+        metrics.incrementTotalRequests();
 
         const session = await this.sessionManager.getOrCreateSession(userId);
 
@@ -475,6 +478,14 @@ export class SimpleChat {
                 meta: { replyLength: accumulatedText.length, latencyMs: Date.now() - startedAtMs } 
             });
 
+            // P2 metrics: 字段1 首字响应>8s / 字段2 总耗时>25s
+            if (firstResponseMs !== undefined && firstResponseMs > 8000) {
+                metrics.incrementFirstChunkGt8s();
+            }
+            if (Date.now() - processingStartTime > 25000) {
+                metrics.incrementTotalDurationGt25s();
+            }
+
             const cleanedReply = this._sanitizeAssistantText(accumulatedText);
             // [New] Async Persist to Supabase (Fire-and-Forget)
             // Extract clean instructions from enhanced input
@@ -537,15 +548,18 @@ export class SimpleChat {
                         logger.warn({ kind: 'biz', component: COMPONENT,
                             message: 'Credit deduction returned false',
                             meta: { userId, cost } });
+                        metrics.incrementNoDeduction();
                     }
                 }).catch(err => {
                     logger.error({ kind: 'infra', component: COMPONENT,
                         message: 'Credit deduction exception', error: err });
+                    metrics.incrementNoDeduction();
                 });
             } else if (!executionTrace.streamCompleted) {
                 logger.info({ kind: 'biz', component: COMPONENT,
                     message: 'Skipping credit deduction (stream not naturally completed)',
                     meta: { userId, streamCompleted: executionTrace.streamCompleted } });
+                metrics.incrementNoDeduction();
             }
         } else {
             logger.error({ kind: 'biz', component: COMPONENT, message: 'Streaming returned empty' });

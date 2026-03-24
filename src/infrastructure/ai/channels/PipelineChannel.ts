@@ -3,6 +3,7 @@ import type { IAIChannel } from '../../../features/chat/ports/IAIChannel.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { logger } from '../../../platform/logger.js';
 import config from '../../../platform/config.js';
+import { metrics } from '../../metrics/MetricsCollector.js';
 
 
 export class PipelineChannel implements IAIChannel {
@@ -122,6 +123,8 @@ export class PipelineChannel implements IAIChannel {
                                     profileId: meta.profileId 
                                 } 
                             });
+                            if (meta.model) metrics.incrementModelFirstchunkTimeout(meta.model);
+                            meta._isTtftTimeout = true;
                             throw new Error(reason);
                         } else {
                             // Stage 2: Inter-chunk Timeout -> Success (Truncate)
@@ -165,6 +168,12 @@ export class PipelineChannel implements IAIChannel {
         for (let i = 0; i < this.steps.length; i++) {
             const profile = this.steps[i];
             const isLastAttempt = i === this.steps.length - 1;
+            const stepMeta: Record<string, any> = {
+                pipelineId: this.pipelineId,
+                profileId: profile.id,
+                model: profile.model,
+                streamCompleted: false,
+            };
 
             logger.info({ 
                 kind: 'infra', 
@@ -229,11 +238,7 @@ export class PipelineChannel implements IAIChannel {
                     },
                 });
 
-                const stepMeta: Record<string, any> = {
-                    pipelineId: this.pipelineId,
-                    profileId: profile.id,
-                    streamCompleted: false,
-                };
+                metrics.incrementModelTotalCalls(profile.model);
                 const managed = this.managedStream(
                     rawStream, 
                     ttftMs, 
@@ -269,6 +274,10 @@ export class PipelineChannel implements IAIChannel {
                         context.trace.streamCompleted = !!stepMeta.streamCompleted;
                     }
 
+                    if (i + 1 === 2) metrics.incrementStep2Success();
+                    if (i + 1 === 3) metrics.incrementStep3Success();
+                    if (!stepMeta.streamCompleted) metrics.incrementModelTruncated(profile.model);
+
                     return;
                 } else {
                     // 如果流没内容（比如刚连上就断了，且没抛 TTFT），视为失败
@@ -279,6 +288,10 @@ export class PipelineChannel implements IAIChannel {
                 // Immediately sever the underlying HTTP connection so the failed
                 // step's TCP socket is released and doesn't linger as a zombie.
                 engine.abort();
+
+                if (!stepMeta._isTtftTimeout) {
+                    metrics.incrementModelError(profile.model);
+                }
 
                 logger.warn({ 
                     kind: 'infra', 

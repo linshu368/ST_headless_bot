@@ -23,6 +23,7 @@ import { PAYMENT_METHODS, PaymentType } from '../../types/payment.js';
 import type { InternalPaymentEvent } from '../../types/payment.js';
 import { SupabasePaymentOrderRepository } from '../../infrastructure/repositories/SupabasePaymentOrderRepository.js';
 import { feishuAlert, AlertType } from '../../infrastructure/alerts/FeishuAlertService.js';
+import { metrics } from '../../infrastructure/metrics/MetricsCollector.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -399,6 +400,8 @@ export class TelegramBotAdapter {
                     error,  // 传入原始错误对象
                     meta: { chatId, text: text.slice(0, 50) } 
                 });
+                metrics.incrementAllStepsFailed();
+                metrics.incrementNoDeduction();
                 await this.bot.sendMessage(msg.chat.id, "抱歉，系统暂时出现故障，请稍后再试。");
             } finally {
                 // 无论成功还是异常，必须释放锁
@@ -806,6 +809,8 @@ export class TelegramBotAdapter {
                             break;
                         }
                          logger.error({ kind: 'biz', component: COMPONENT, message: 'Regenerate flow failed', error });
+                         metrics.incrementAllStepsFailed();
+                         metrics.incrementNoDeduction();
                          // Prevent secondary error if network is down
                          await this.bot.editMessageText("重新生成遇到错误，请稍后再试。", {
                             chat_id: chatId,
