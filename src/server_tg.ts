@@ -2,6 +2,7 @@ import config from './platform/config.js';
 import { TelegramBotAdapter } from './features/telegram_adapter/TelegramBotAdapter.js';
 import { setupGlobalErrorHandlers } from './infrastructure/globalErrorHandler.js';
 import { feishuAlert, AlertType } from './infrastructure/alerts/FeishuAlertService.js';
+import { p2Report } from './infrastructure/metrics/P2ReportService.js';
 import { logger } from './platform/logger.js';
 import { createServer } from 'node:http';
 
@@ -24,6 +25,7 @@ async function main() {
 
     try {
         await adapter.start();
+        p2Report.startSchedule();
         console.log('Bot is running. Press Ctrl+C to stop.');
 
         const healthPort = Number(process.env.PORT) || 3000;
@@ -49,6 +51,7 @@ async function main() {
         // Keep process alive
         process.on('SIGINT', async () => {
             console.log('\nStopping bot...');
+            p2Report.stopSchedule();
             await new Promise<void>((resolve) => healthServer.close(() => resolve()));
             await adapter.stop();
             process.exit(0);

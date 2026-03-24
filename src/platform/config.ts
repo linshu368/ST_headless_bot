@@ -76,6 +76,8 @@ export interface Config {
     alerts: {
         feishuWebhookUrl: string;
         feishuWebhookSecret: string;
+        feishuReportWebhookUrl: string;
+        feishuReportWebhookSecret: string;
     };
     fallbackMessages: {
         p0: string;
@@ -158,6 +160,8 @@ const config: Config = {
     alerts: {
         feishuWebhookUrl: process.env.FEISHU_WEBHOOK_URL || '',
         feishuWebhookSecret: process.env.FEISHU_WEBHOOK_SECRET || '',
+        feishuReportWebhookUrl: process.env.FEISHU_REPORT_WEBHOOK_URL || '',
+        feishuReportWebhookSecret: process.env.FEISHU_REPORT_WEBHOOK_SECRET || '',
     },
     fallbackMessages: {
         p0: process.env.FALLBACK_MESSAGE_P0 || '抱歉，系统暂时出现故障，请稍后再试。',
