@@ -74,8 +74,12 @@ class P2ReportService {
 
         this.reportTimer = setInterval(() => {
             const now = new Date();
-            const hh = now.getHours();
-            const mm = now.getMinutes();
+            // ========== 修复：UTC → 北京时间 ==========
+            const utcH = now.getUTCHours();
+            const utcM = now.getUTCMinutes();
+            const hh = (utcH + 8) % 24;   // UTC+8
+            const mm = utcM;
+            // ==========================================
             const key = `${hh}:${mm}`;
 
             if (key === lastFiredKey) return;

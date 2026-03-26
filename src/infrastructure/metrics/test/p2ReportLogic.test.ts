@@ -6,7 +6,7 @@ import {
     buildCard,
     type RawMetrics,
     type P2ReportData,
-} from '../p2ReportLogic.js';
+} from './p2ReportLogic.js';
 
 // ==================== 辅助函数 ====================
 
