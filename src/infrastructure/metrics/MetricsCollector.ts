@@ -167,22 +167,22 @@ class MetricsCollector {
 
     private _getHourBucket(): string {
         const now = new Date();
-        const y = now.getFullYear();
-        const M = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const h = String(now.getHours()).padStart(2, '0');
+        const y = now.getUTCFullYear();
+        const M = String(now.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(now.getUTCDate()).padStart(2, '0');
+        const h = String(now.getUTCHours()).padStart(2, '0');
         return `${y}${M}${d}${h}`;
     }
-
+    
     private _getHourBuckets(hours: number): string[] {
         const buckets: string[] = [];
         const now = Date.now();
         for (let i = 0; i < hours; i++) {
             const t = new Date(now - i * 3600_000);
-            const y = t.getFullYear();
-            const M = String(t.getMonth() + 1).padStart(2, '0');
-            const d = String(t.getDate()).padStart(2, '0');
-            const h = String(t.getHours()).padStart(2, '0');
+            const y = t.getUTCFullYear();
+            const M = String(t.getUTCMonth() + 1).padStart(2, '0');
+            const d = String(t.getUTCDate()).padStart(2, '0');
+            const h = String(t.getUTCHours()).padStart(2, '0');
             buckets.push(`${y}${M}${d}${h}`);
         }
         return buckets;

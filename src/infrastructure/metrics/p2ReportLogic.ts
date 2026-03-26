@@ -7,6 +7,25 @@
 
 const MAX_MODEL_ROWS = 12;
 
+// ==================== 时区工具 ====================
+
+/** UTC Date 转北京时间 Date（偏移 8 小时） */
+function toBeijing(d: Date): Date {
+    return new Date(d.getTime() + 8 * 3600_000);
+}
+
+/** 格式化为北京时间字符串（带 +08:00 后缀） */
+function formatBeijingTime(d: Date): string {
+    const b = toBeijing(d);
+    const y = b.getUTCFullYear();
+    const M = String(b.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(b.getUTCDate()).padStart(2, '0');
+    const hh = String(b.getUTCHours()).padStart(2, '0');
+    const mm = String(b.getUTCMinutes()).padStart(2, '0');
+    const ss = String(b.getUTCSeconds()).padStart(2, '0');
+    return `${y}-${M}-${dd}T${hh}:${mm}:${ss}+08:00`;
+}
+
 // ==================== 数据类型 ====================
 
 export interface ModelStat {
@@ -85,18 +104,18 @@ export function rate(numerator: number, denominator: number): string {
 }
 
 export function buildPeriodLabel(hours: number, now: Date = new Date()): string {
-    // UTC → Beijing: 加 8 小时
-    const beijing = new Date(now.getTime() + 8 * 3600_000);
+    const beijing = toBeijing(now);
+
     const currentHour = new Date(beijing);
-    currentHour.setMinutes(0, 0, 0);
+    currentHour.setUTCMinutes(0, 0, 0);
 
     const startHour = new Date(currentHour.getTime() - (hours - 1) * 3600_000);
 
     const fmt = (d: Date) => {
-        const y = d.getFullYear();
-        const M = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        const hh = String(d.getHours()).padStart(2, '0');
+        const y = d.getUTCFullYear();
+        const M = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(d.getUTCDate()).padStart(2, '0');
+        const hh = String(d.getUTCHours()).padStart(2, '0');
         return `${y}-${M}-${dd} ${hh}:00`;
     };
 
@@ -176,7 +195,7 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
         omittedModelCount,
         consistencyChecks,
         periodLabel: buildPeriodLabel(hours, now),
-        generatedAt: now.toISOString(),
+        generatedAt: formatBeijingTime(now),
     };
 }
 
