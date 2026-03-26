@@ -199,7 +199,7 @@ describe('computeReport()', () => {
         const data = computeReport(raw, 6, FIXED_NOW);
 
         // failureRate = (6+4)/200 = 5.00%（注意 truncated 不计入失败率分子）
-        expect(data.modelStats[0].failureRate).toBe('5.00%');
+        expect(data.modelStats[0].invisibleFailureRate).toBe('5.00%');
         expect(data.modelStats[0].truncated).toBe(2);
     });
 
@@ -228,7 +228,7 @@ describe('computeReport()', () => {
         expect(data.modelStats[0].totalCalls).toBe(0);
         expect(data.modelStats[0].error).toBe(5);
         // 0 分母 → 0.00%
-        expect(data.modelStats[0].failureRate).toBe('0.00%');
+        expect(data.modelStats[0].invisibleFailureRate).toBe('0.00%');
     });
 
     // ---------- 元信息 ----------

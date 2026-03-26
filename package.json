@@ -137,6 +137,7 @@
         "start:no-csrf": "node server.js --disableCsrf",
         "test:rules": "node --loader ts-node/esm src/features/chat/rules/tests/streamingSchedule.golden.ts",
         "test:redis": "tsx src/infrastructure/redis/tests/upstashSessionStore.test.ts",
+        "test": "vitest run",
         "test:session": "tsx src/features/session/usecases/tests/sessionResolution.test.ts",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",

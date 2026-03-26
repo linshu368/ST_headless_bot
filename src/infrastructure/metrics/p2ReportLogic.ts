@@ -12,10 +12,13 @@ const MAX_MODEL_ROWS = 12;
 export interface ModelStat {
     model: string;
     totalCalls: number;
+    // 用户不可感知
     firstchunkTimeout: number;
     error: number;
+    invisibleFailureRate: string;
+    // 用户可感知
     truncated: number;
-    failureRate: string;
+    visibleFailureRate: string;
 }
 
 export interface ConsistencyCheck {
@@ -127,8 +130,9 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
             totalCalls: total,
             firstchunkTimeout: timeout,
             error: err,
+            invisibleFailureRate: rate(timeout + err, total),
             truncated: trunc,
-            failureRate: rate(timeout + err, total),
+            visibleFailureRate: rate(trunc, total),
         };
     }).sort((a, b) => b.totalCalls - a.totalCalls);
 
@@ -227,29 +231,34 @@ export function buildCard(data: P2ReportData): object {
 
     elements.push({ tag: 'hr' });
 
-   // --- 第三块：模型维度 ---
-   const modelLines: string[] = [`**🤖 模型维度**`, ''];
+    // --- 第三块：模型维度 ---
+    const modelLines: string[] = [`**🤖 模型维度**`, ''];
 
-   if (data.modelStats.length === 0) {
-       modelLines.push('（无模型数据）');
-   } else {
-       for (const m of data.modelStats) {
-           modelLines.push(
-               `**${m.model}**：总调用 ${m.totalCalls} | 超时 ${m.firstchunkTimeout} | 报错 ${m.error} | 截断 ${m.truncated} | 失败率 ${m.failureRate}`
-           );
-       }
-       if (data.omittedModelCount > 0) {
-           modelLines.push(`*(另有 ${data.omittedModelCount} 个模型已省略)*`);
-       }
-   }
+    if (data.modelStats.length === 0) {
+        modelLines.push('（无模型数据）');
+    } else {
+        for (const m of data.modelStats) {
+            modelLines.push(
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+                `📦 **${m.model}**\u3000\u3000调用 ${m.totalCalls}`,
+                `╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌`,
+                `\u3000\u3000🔴 用户可感知\u3000\u3000截断 ${m.truncated}\u3000\u3000失败率 ${m.visibleFailureRate}`,
+                `\u3000\u3000⚪ 用户不可感知\u3000超时 ${m.firstchunkTimeout} · 报错 ${m.error}\u3000\u3000失败率 ${m.invisibleFailureRate}`,
+            );
+        }
+        modelLines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        if (data.omittedModelCount > 0) {
+            modelLines.push(`*(另有 ${data.omittedModelCount} 个模型已省略)*`);
+        }
+    }
 
-   elements.push({
-       tag: 'div',
-       text: {
-           tag: 'lark_md',
-           content: modelLines.join('\n'),
-       },
-   });
+    elements.push({
+        tag: 'div',
+        text: {
+            tag: 'lark_md',
+            content: modelLines.join('\n'),
+        },
+    });
 
     elements.push({ tag: 'hr' });
 
