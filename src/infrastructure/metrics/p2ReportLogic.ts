@@ -85,7 +85,9 @@ export function rate(numerator: number, denominator: number): string {
 }
 
 export function buildPeriodLabel(hours: number, now: Date = new Date()): string {
-    const currentHour = new Date(now);
+    // UTC → Beijing: 加 8 小时
+    const beijing = new Date(now.getTime() + 8 * 3600_000);
+    const currentHour = new Date(beijing);
     currentHour.setMinutes(0, 0, 0);
 
     const startHour = new Date(currentHour.getTime() - (hours - 1) * 3600_000);
