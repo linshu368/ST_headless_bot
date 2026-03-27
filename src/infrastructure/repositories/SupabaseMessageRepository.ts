@@ -1,6 +1,6 @@
 import { supabase } from '../supabase/SupabaseClient.js';
 import type { IMessageRepository, OpenRouterStats } from '../../features/chat/ports/IMessageRepository.js';
-import type { MessageLogRecord } from '../../features/chat/domain/MessageLogRecord.js';
+import type { MessageLogRecord, CreditAccount } from '../../features/chat/domain/MessageLogRecord.js';
 import { logger } from '../../platform/logger.js';
 
 const COMPONENT = 'SupabaseMessageRepository';
@@ -18,7 +18,6 @@ export class SupabaseMessageRepository implements IMessageRepository {
         try {
             const round = record.round ?? 0;
 
-            // Ensure history is a string if it's an object/array
             const historyContent = typeof record.history === 'string' 
                 ? record.history 
                 : JSON.stringify(record.history);
@@ -40,7 +39,9 @@ export class SupabaseMessageRepository implements IMessageRepository {
                     first_response_latency: record.first_response_latency || null,
                     trace_id: record.trace_id || null,
                     session_id: record.session_id || null,
-                    accept_at: record.accept_at || null
+                    accept_at: record.accept_at || null,
+                    credits_deducted: record.credits_deducted ?? 0,
+                    credits_account: record.credits_account ?? null,
                 })
                 .select('id')
                 .single();
@@ -65,7 +66,7 @@ export class SupabaseMessageRepository implements IMessageRepository {
             const { error } = await supabase
                 .from('messages')
                 .update({
-                    meta_model: stats.model, // OpenRouter model name (might be more specific)
+                    meta_model: stats.model,
                     meta_generation_time: stats.generation_time,
                     meta_latency: stats.latency,
                     meta_native_tokens_prompt: stats.native_tokens_prompt,
@@ -73,7 +74,7 @@ export class SupabaseMessageRepository implements IMessageRepository {
                     meta_native_tokens_reasoning: stats.native_tokens_reasoning,
                     meta_native_tokens_cached: stats.native_tokens_cached,
                     meta_cache_discount: stats.cache_discount,
-                    meta_usage: { cost: stats.usage }, // Store as JSONB
+                    meta_usage: { cost: stats.usage },
                     meta_finish_reason: stats.finish_reason,
                     meta_provider_name: stats.provider_name
                 })
@@ -86,6 +87,25 @@ export class SupabaseMessageRepository implements IMessageRepository {
             }
         } catch (err) {
             logger.error({ kind: 'infra', component: COMPONENT, message: 'Exception during stats update', error: err });
+        }
+    }
+
+    async updateCreditsDeducted(messageId: string, amount: number | null, account: CreditAccount | null): Promise<void> {
+        if (!supabase) return;
+
+        try {
+            const { error } = await supabase
+                .from('messages')
+                .update({ credits_deducted: amount, credits_account: account })
+                .eq('id', messageId);
+
+            if (error) {
+                logger.error({ kind: 'infra', component: COMPONENT, message: 'Failed to update credits_deducted', error, meta: { messageId, amount, account } });
+            } else {
+                logger.debug({ kind: 'infra', component: COMPONENT, message: 'credits_deducted updated', meta: { messageId, amount, account } });
+            }
+        } catch (err) {
+            logger.error({ kind: 'infra', component: COMPONENT, message: 'Exception during credits_deducted update', error: err });
         }
     }
 }

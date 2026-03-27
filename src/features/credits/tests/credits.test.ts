@@ -17,7 +17,7 @@ import {
     InsufficientCreditsError,
 } from '../rules/creditCost.js';
 import { SupabaseCreditRepository } from '../../../infrastructure/repositories/SupabaseCreditRepository.js';
-import type { ICreditsRepository, CreditBalance } from '../ports/ICreditsRepository.js';
+import type { ICreditsRepository, CreditBalance, DeductionResult } from '../ports/ICreditsRepository.js';
 
 // ============================================================
 // Test Runner
@@ -208,27 +208,28 @@ function createPartB(): TestCase[] {
             },
         },
         {
-            name: 'deductCredits: 扣 1 积分成功 → true',
+            name: 'deductCredits: 扣 1 积分成功 → 返回 DeductionResult',
             fn: async () => {
                 if (!TEST_USER) skip();
                 const before = await repo.getBalance(TEST_USER);
                 if (!before) skip();
 
                 const totalBefore = before!.mainCredits + before!.bonusCredits;
-                if (totalBefore < 1) skip(); // 余额不够测试
+                if (totalBefore < 1) skip();
 
-                const ok = await repo.deductCredits(TEST_USER, 1);
-                assert.equal(ok, true);
+                const result = await repo.deductCredits(TEST_USER, 1);
+                assert.ok(result, 'deductCredits should return DeductionResult on success');
+                assert.equal(result!.mainDeducted + result!.bonusDeducted, 1, 'total deducted should equal 1');
 
                 const after = await repo.getBalance(TEST_USER);
                 assert.ok(after, 'balance should exist after deduction');
                 const totalAfter = after!.mainCredits + after!.bonusCredits;
                 assert.equal(totalAfter, totalBefore - 1, `expected ${totalBefore - 1}, got ${totalAfter}`);
-                console.log(`    → before=${totalBefore}, after=${totalAfter}`);
+                console.log(`    → before=${totalBefore}, after=${totalAfter}, mainDeducted=${result!.mainDeducted}, bonusDeducted=${result!.bonusDeducted}`);
             },
         },
         {
-            name: 'deductCredits: 扣除优先级验证 (main 先扣)',
+            name: 'deductCredits: 扣除优先级验证 (main 先扣，返回明细)',
             fn: async () => {
                 if (!TEST_USER) skip();
                 const before = await repo.getBalance(TEST_USER);
@@ -237,27 +238,28 @@ function createPartB(): TestCase[] {
                 const mainBefore = before!.mainCredits;
                 const bonusBefore = before!.bonusCredits;
 
-                const ok = await repo.deductCredits(TEST_USER, 1);
-                assert.equal(ok, true);
+                const result = await repo.deductCredits(TEST_USER, 1);
+                assert.ok(result);
+                assert.equal(result!.mainDeducted, 1, 'should deduct from main first');
+                assert.equal(result!.bonusDeducted, 0, 'bonus should not be touched');
 
                 const after = await repo.getBalance(TEST_USER);
                 assert.ok(after);
-                // main 应该减少（因为 main 有余额时优先扣 main）
                 assert.equal(after!.mainCredits, mainBefore - 1, 'main should decrease first');
                 assert.equal(after!.bonusCredits, bonusBefore, 'bonus should stay unchanged');
                 console.log(`    → main: ${mainBefore} → ${after!.mainCredits}, bonus: ${bonusBefore} → ${after!.bonusCredits}`);
             },
         },
         {
-            name: 'deductCredits: 超额扣除 → false（余额不变）',
+            name: 'deductCredits: 超额扣除 → null（余额不变）',
             fn: async () => {
                 if (!TEST_USER) skip();
                 const before = await repo.getBalance(TEST_USER);
                 if (!before) skip();
 
                 const totalBefore = before!.mainCredits + before!.bonusCredits;
-                const ok = await repo.deductCredits(TEST_USER, totalBefore + 9999);
-                assert.equal(ok, false);
+                const result = await repo.deductCredits(TEST_USER, totalBefore + 9999);
+                assert.equal(result, null, 'should return null on insufficient balance');
 
                 const after = await repo.getBalance(TEST_USER);
                 assert.ok(after);
@@ -266,11 +268,11 @@ function createPartB(): TestCase[] {
             },
         },
         {
-            name: 'deductCredits: 不存在的用户 → false',
+            name: 'deductCredits: 不存在的用户 → null',
             fn: async () => {
                 if (!TEST_USER) skip();
-                const ok = await repo.deductCredits('nonexistent_user_id_99999', 1);
-                assert.equal(ok, false);
+                const result = await repo.deductCredits('nonexistent_user_id_99999', 1);
+                assert.equal(result, null, 'should return null for nonexistent user');
             },
         },
     ];
@@ -280,12 +282,13 @@ function createPartB(): TestCase[] {
 // Part C: Integration Logic Tests (模拟 SimpleChat 决策)
 // ============================================================
 
-/** Mock: 正常返回余额 */
+/** Mock: 正常返回余额，deductCredits 模拟 RPC 返回扣费明细 */
 class MockCreditsRepo implements ICreditsRepository {
     private main: number;
     private bonus: number;
     public deductCalled = false;
     public lastDeductAmount = 0;
+    public lastResult: DeductionResult | null = null;
 
     constructor(main: number, bonus: number) {
         this.main = main;
@@ -296,17 +299,31 @@ class MockCreditsRepo implements ICreditsRepository {
         return { mainCredits: this.main, bonusCredits: this.bonus };
     }
 
-    async deductCredits(_userId: string, amount: number): Promise<boolean> {
+    async deductCredits(_userId: string, amount: number): Promise<DeductionResult | null> {
         this.deductCalled = true;
         this.lastDeductAmount = amount;
         const total = this.main + this.bonus;
-        if (total < amount) return false;
-        this.main = Math.max(0, this.main - amount);
-        if (amount > this.main + amount) {
-            // already handled above
+        if (total < amount) return null;
+
+        let mainDeducted: number;
+        let bonusDeducted: number;
+
+        if (this.main >= amount) {
+            mainDeducted = amount;
+            bonusDeducted = 0;
+            this.main -= amount;
+        } else {
+            mainDeducted = this.main;
+            bonusDeducted = amount - this.main;
+            this.main = 0;
+            this.bonus -= bonusDeducted;
         }
-        return true;
+
+        this.lastResult = { mainDeducted, bonusDeducted };
+        return this.lastResult;
     }
+
+    async addCredits(): Promise<boolean> { return true; }
 }
 
 /** Mock: 模拟积分系统故障（getBalance 返回 null） */
@@ -314,9 +331,10 @@ class FailingCreditsRepo implements ICreditsRepository {
     async getBalance(_userId: string): Promise<CreditBalance | null> {
         return null;
     }
-    async deductCredits(_userId: string, _amount: number): Promise<boolean> {
-        return false;
+    async deductCredits(_userId: string, _amount: number): Promise<DeductionResult | null> {
+        return null;
     }
+    async addCredits(): Promise<boolean> { return false; }
 }
 
 /**
@@ -360,8 +378,8 @@ async function simulateCreditDecision(
     if (streamCompleted && creditsRepository) {
         const tier = resolveTierFromMode(userMode);
         const cost = getCostForTier(tier);
-        const ok = await creditsRepository.deductCredits(userId, cost);
-        deductResult = ok ? 'deducted' : 'skipped_no_repo';
+        const result = await creditsRepository.deductCredits(userId, cost);
+        deductResult = result ? 'deducted' : 'skipped_no_repo';
     } else if (!streamCompleted) {
         deductResult = 'skipped_not_completed';
     } else {

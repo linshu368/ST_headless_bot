@@ -1,3 +1,6 @@
+/** Which credit account was charged */
+export type CreditAccount = 'main_credits' | 'bonus_credits';
+
 export interface MessageLogRecord {
     user_id: string;
     role_id: string | null;
@@ -14,5 +17,7 @@ export interface MessageLogRecord {
     trace_id?: string; // links to engineering logs for root-cause analysis
     session_id?: string;
     accept_at?: string; // ISO 8601 – when the bot received the user message
+    credits_deducted?: number | null; // >0: amount deducted, 0: skipped, null: deduction failed
+    credits_account?: CreditAccount | null; // which account was charged; null when deduction failed or skipped
     // id and created_at are handled by DB
 }

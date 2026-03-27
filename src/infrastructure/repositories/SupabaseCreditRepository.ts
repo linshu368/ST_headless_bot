@@ -1,5 +1,5 @@
 import { supabase } from '../supabase/SupabaseClient.js';
-import type { ICreditsRepository, CreditBalance } from '../../features/credits/ports/ICreditsRepository.js';
+import type { ICreditsRepository, CreditBalance, DeductionResult } from '../../features/credits/ports/ICreditsRepository.js';
 import { logger } from '../../platform/logger.js';
 
 const COMPONENT = 'SupabaseCreditRepo';
@@ -9,7 +9,7 @@ const COMPONENT = 'SupabaseCreditRepo';
  *
  * 设计约束（"bot 不依赖积分系统"）：
  * - 每个方法内部自行兜底，永远不向外抛异常
- * - getBalance 失败返回 null，deductCredits 失败返回 false
+ * - getBalance 失败返回 null，deductCredits 失败返回 null
  */
 export class SupabaseCreditRepository implements ICreditsRepository {
 
@@ -49,8 +49,8 @@ export class SupabaseCreditRepository implements ICreditsRepository {
         }
     }
 
-    async deductCredits(userId: string, amount: number): Promise<boolean> {
-        if (!supabase) return false;
+    async deductCredits(userId: string, amount: number): Promise<DeductionResult | null> {
+        if (!supabase) return null;
 
         try {
             const { data, error } = await supabase.rpc('deduct_credits', {
@@ -66,10 +66,25 @@ export class SupabaseCreditRepository implements ICreditsRepository {
                     error,
                     meta: { userId, amount },
                 });
-                return false;
+                return null;
             }
 
-            return data === true;
+            // RPC returns JSONB: { success, main_deducted, bonus_deducted }
+            // Supabase auto-parses JSONB → JS object
+            if (data && typeof data === 'object' && data.success === true) {
+                return {
+                    mainDeducted: data.main_deducted ?? 0,
+                    bonusDeducted: data.bonus_deducted ?? 0,
+                };
+            }
+
+            logger.warn({
+                kind: 'infra',
+                component: COMPONENT,
+                message: 'deduct_credits RPC returned non-success',
+                meta: { userId, amount, data },
+            });
+            return null;
         } catch (err) {
             logger.error({
                 kind: 'infra',
@@ -78,7 +93,7 @@ export class SupabaseCreditRepository implements ICreditsRepository {
                 error: err,
                 meta: { userId, amount },
             });
-            return false;
+            return null;
         }
     }
 

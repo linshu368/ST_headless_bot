@@ -11,6 +11,14 @@ export interface CreditBalance {
     bonusCredits: number;
 }
 
+/** 单次扣费明细（由 RPC 原子返回，不可伪造） */
+export interface DeductionResult {
+    /** 从 main_credits 实际扣除的数量 */
+    mainDeducted: number;
+    /** 从 bonus_credits 实际扣除的数量 */
+    bonusDeducted: number;
+}
+
 export interface ICreditsRepository {
     /**
      * 查询用户余额
@@ -20,10 +28,10 @@ export interface ICreditsRepository {
 
     /**
      * 原子扣减积分（优先扣 main，不足部分从 bonus 扣）
-     * 扣减顺序由基础设施层的实现保证
-     * @returns true=扣减成功, false=余额不足或系统异常
+     * 扣减顺序由基础设施层的 RPC 保证
+     * @returns 扣费明细；余额不足或系统异常返回 null
      */
-    deductCredits(userId: string, amount: number): Promise<boolean>;
+    deductCredits(userId: string, amount: number): Promise<DeductionResult | null>;
 
     /**
      * 充值积分（支付成功后调用）

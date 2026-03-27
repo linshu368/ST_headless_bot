@@ -1,4 +1,4 @@
-import type { MessageLogRecord } from '../domain/MessageLogRecord.js';
+import type { MessageLogRecord, CreditAccount } from '../domain/MessageLogRecord.js';
 
 export interface OpenRouterStats {
     model: string;
@@ -32,4 +32,12 @@ export interface IMessageRepository {
      * @param stats 统计数据
      */
     updateMessageStats(messageId: string, stats: OpenRouterStats): Promise<void>;
+
+    /**
+     * 回写积分扣除结果
+     * @param messageId 消息 ID
+     * @param amount 实际扣除数; null 表示扣除失败
+     * @param account 扣费账户; null 表示扣除失败或未扣费
+     */
+    updateCreditsDeducted(messageId: string, amount: number | null, account: CreditAccount | null): Promise<void>;
 }

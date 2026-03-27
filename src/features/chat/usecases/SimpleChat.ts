@@ -10,11 +10,12 @@ import type { RequestTimer } from '../../../platform/RequestTimer.js';
 import type { IChannelRegistry } from '../ports/IChannelRegistry.js';
 import type { IMessageRepository } from '../ports/IMessageRepository.js';
 import { resolveTierFromMode } from '../domain/ModelStrategy.js';
+import type { CreditAccount } from '../domain/MessageLogRecord.js';
 import type { ISTEngine } from '../../../core/ports/ISTEngine.js';
 import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 import { PipelineChannel } from '../../../infrastructure/ai/channels/PipelineChannel.js';
 import { getTraceId } from '../../../platform/tracing.js';
-import type { ICreditsRepository } from '../../credits/ports/ICreditsRepository.js';
+import type { ICreditsRepository, DeductionResult } from '../../credits/ports/ICreditsRepository.js';
 import { getCostForTier, getTotalBalance, hasEnoughCredits, InsufficientCreditsError } from '../../credits/rules/creditCost.js';
 import type { SupabaseUserRepository } from '../../../infrastructure/repositories/SupabaseUserRepository.js';
 import { feishuAlert, AlertType } from '../../../infrastructure/alerts/FeishuAlertService.js';
@@ -495,6 +496,16 @@ export class SimpleChat {
                 cleanInstructions = instructionMatch[1].trim();
             }
 
+            // Derive the primary account from RPC-returned deduction breakdown
+            const deriveCreditAccount = (dr: DeductionResult): CreditAccount => {
+                if (dr.mainDeducted > 0) return 'main_credits';
+                return 'bonus_credits';
+            };
+
+            const shouldDeduct = executionTrace.streamCompleted && !!this.creditsRepository;
+            const deductTier = resolveTierFromMode(userMode);
+            const deductCost = getCostForTier(deductTier, aiConfigSource.tier_costs);
+
             this.messageRepository.saveMessage({
                 user_id: userId,
                 role_id: session.character?.extensions?.role_id || null,
@@ -511,10 +522,45 @@ export class SimpleChat {
                 trace_id: getTraceId(),
                 session_id: session.sessionId,
                 accept_at: new Date(processingStartTime).toISOString(),
+                credits_deducted: 0,
+                credits_account: null,
             }).then(messageId => {
                 if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
                     this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {
                         logger.error({ kind: 'infra', component: COMPONENT, message: 'Backfill stats failed', error: err });
+                    });
+                }
+
+                // Credit deduction (Fire-and-Forget, 不堵塞响应路径)
+                if (shouldDeduct) {
+                    this.creditsRepository!.deductCredits(userId, deductCost).then(result => {
+                        if (result) {
+                            const account = deriveCreditAccount(result);
+                            const totalDeducted = result.mainDeducted + result.bonusDeducted;
+                            logger.info({ kind: 'biz', component: COMPONENT,
+                                message: 'Credits deducted',
+                                meta: { userId, cost: deductCost, tier: deductTier, account,
+                                        mainDeducted: result.mainDeducted, bonusDeducted: result.bonusDeducted,
+                                        model: executionTrace.model } });
+                            if (messageId) {
+                                this.messageRepository.updateCreditsDeducted(messageId, totalDeducted, account);
+                            }
+                        } else {
+                            logger.warn({ kind: 'biz', component: COMPONENT,
+                                message: 'Credit deduction returned null (failed or insufficient)',
+                                meta: { userId, cost: deductCost } });
+                            metrics.incrementNoDeduction();
+                            if (messageId) {
+                                this.messageRepository.updateCreditsDeducted(messageId, null, null);
+                            }
+                        }
+                    }).catch(err => {
+                        logger.error({ kind: 'infra', component: COMPONENT,
+                            message: 'Credit deduction exception', error: err });
+                        metrics.incrementNoDeduction();
+                        if (messageId) {
+                            this.messageRepository.updateCreditsDeducted(messageId, null, null);
+                        }
                     });
                 }
             }).catch(err => {
@@ -528,34 +574,19 @@ export class SimpleChat {
                     traceId: getTraceId(),
                     meta: { sessionId: session.sessionId, model: executionTrace.model },
                 });
+                // saveMessage failed → still attempt deduction (不因日志失败阻塞扣费)
+                if (shouldDeduct) {
+                    this.creditsRepository!.deductCredits(userId, deductCost).then(result => {
+                        if (!result) metrics.incrementNoDeduction();
+                    }).catch(() => metrics.incrementNoDeduction());
+                }
             });
 
             this.userRepository?.incrementTotalRound(userId).catch(err => {
                 logger.error({ kind: 'infra', component: COMPONENT, message: 'Failed to increment total_round', error: err });
             });
 
-            // Credit deduction (Fire-and-Forget, 不堵塞响应路径)
-            // 三个条件缺一不可：有回复内容 + LLM 自然完成 + 积分系统已注入
-            if (executionTrace.streamCompleted && this.creditsRepository) {
-                const deductTier = resolveTierFromMode(userMode);
-                const cost = getCostForTier(deductTier, aiConfigSource.tier_costs);
-                this.creditsRepository.deductCredits(userId, cost).then(ok => {
-                    if (ok) {
-                        logger.info({ kind: 'biz', component: COMPONENT,
-                            message: 'Credits deducted',
-                            meta: { userId, cost, tier: deductTier, model: executionTrace.model } });
-                    } else {
-                        logger.warn({ kind: 'biz', component: COMPONENT,
-                            message: 'Credit deduction returned false',
-                            meta: { userId, cost } });
-                        metrics.incrementNoDeduction();
-                    }
-                }).catch(err => {
-                    logger.error({ kind: 'infra', component: COMPONENT,
-                        message: 'Credit deduction exception', error: err });
-                    metrics.incrementNoDeduction();
-                });
-            } else if (!executionTrace.streamCompleted) {
+            if (!executionTrace.streamCompleted) {
                 logger.info({ kind: 'biz', component: COMPONENT,
                     message: 'Skipping credit deduction (stream not naturally completed)',
                     meta: { userId, streamCompleted: executionTrace.streamCompleted } });
