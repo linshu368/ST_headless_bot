@@ -58,9 +58,9 @@ export class SimplePromptEngine implements ISTEngine {
 
     // ──────────────────── Prompt Assembly ────────────────────
 
-    private _buildMessages(userInput: string): Array<{ role: string; content: string }> {
+    private _buildMessages(userInput: string): Array<{ role: string; content: any }> {
         const char = this.characters[0];
-        const messages: Array<{ role: string; content: string }> = [];
+        const messages: Array<{ role: string; content: any }> = [];
 
         // 1. System Prompt (character persona)
         const systemPrompt = char?.data?.system_prompt || char?.system_prompt || '';
@@ -100,14 +100,28 @@ export class SimplePromptEngine implements ISTEngine {
         return base.endsWith('/chat/completions') ? base : `${base}/chat/completions`;
     }
 
-    private _buildRequestBody(messages: Array<{ role: string; content: string }>, stream: boolean): any {
+    private _buildRequestBody(messages: Array<{ role: string; content: any }>, stream: boolean): any {
         const model = this.config.openai_model;
         const targetUrl = this._resolveTargetUrl();
         const openRouterChatUrl = 'https://openrouter.ai/api/v1/chat/completions';
+        const isOpenRouter = targetUrl === openRouterChatUrl;
+
+        if (isOpenRouter) {
+            for (const msg of messages) {
+                if (msg.role === 'system' && typeof msg.content === 'string') {
+                    msg.content = [{
+                        type: 'text',
+                        text: msg.content,
+                        cache_control: { type: 'ephemeral' },
+                    }];
+                    break;
+                }
+            }
+        }
 
         const body: any = { model, messages, stream };
 
-        if (targetUrl === openRouterChatUrl) {
+        if (isOpenRouter) {
             body.provider = {
                 sort: 'latency',
                 ignore: ['wandb', 'deepinfra', 'sambanova', 'siliconflow'],
