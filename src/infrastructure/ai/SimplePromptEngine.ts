@@ -106,7 +106,11 @@ export class SimplePromptEngine implements ISTEngine {
         const openRouterChatUrl = 'https://openrouter.ai/api/v1/chat/completions';
         const isOpenRouter = targetUrl === openRouterChatUrl;
 
-        if (isOpenRouter) {
+        // Inject cache_control only when routing through OpenRouter AND
+        // the model is an Anthropic Claude variant (anthropic/claude-*).
+        const isAnthropicClaude = typeof model === 'string' && model.startsWith('anthropic/claude');
+
+        if (isOpenRouter && isAnthropicClaude) {
             for (const msg of messages) {
                 if (msg.role === 'system' && typeof msg.content === 'string') {
                     msg.content = [{
