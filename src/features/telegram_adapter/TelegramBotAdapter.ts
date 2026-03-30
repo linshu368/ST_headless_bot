@@ -683,15 +683,15 @@ export class TelegramBotAdapter {
             await this.bot.deleteMessage(chatId, previousMessageId).catch(() => {});
         }
 
-        // 2. Get Image URL
-        // Assuming file name is 'model_class.png' in 'model_photo' bucket
+        // 2. Get Image URL (append cache-buster to bypass Telegram's server-side image cache)
         const { data } = supabase.storage.from('model_photo').getPublicUrl('model_class.png');
+        const imageUrl = `${data.publicUrl}?v=${Date.now()}`;
         
         // 3. Send Photo with Caption
         const currentMode = await this.sessionManager.getUserModelMode(chatId);
         const caption = UIHandler.getModelSelectionCaption();
 
-        await this.bot.sendPhoto(chatId, data.publicUrl, {
+        await this.bot.sendPhoto(chatId, imageUrl, {
             caption: caption,
             parse_mode: 'Markdown', // Ensure caption uses Markdown if needed, though caption entities are usually auto-detected or simple text.
             reply_markup: UIHandler.createModelSelectionKeyboard(currentMode)
@@ -1028,8 +1028,9 @@ export class TelegramBotAdapter {
         }
 
         const { data } = supabase.storage.from('model_photo').getPublicUrl('credits_plan.png');
+        const creditsImageUrl = `${data.publicUrl}?v=${Date.now()}`;
 
-        await this.bot.sendPhoto(chatId, data.publicUrl, {
+        await this.bot.sendPhoto(chatId, creditsImageUrl, {
             caption: PaymentUIHandler.getCreditsSelectionCaption(),
             parse_mode: 'Markdown',
             reply_markup: await PaymentUIHandler.createCreditsPlansKeyboard(paymentType)
