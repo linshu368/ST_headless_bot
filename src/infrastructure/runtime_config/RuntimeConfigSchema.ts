@@ -181,6 +181,7 @@ export const RuntimeConfigSchema = {
             case 'system_instructions':
             case 'welcome_message':
             case 'insufficient_credits_message':
+            case 'customer_service_message':
             case 'ops_prompt_commit_process_diff':
             case 'ops_prompt_project_arch':
             case 'ops_prompt_project_principle':

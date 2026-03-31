@@ -279,11 +279,11 @@ export class TelegramBotAdapter {
             }
 
             // 2. 菜单处理
-            if (text === '⚙️ 设置') {
-                await this._handleSettings(chatId);
+            if (text === '👤 个人中心') {
+                await this._handlePersonalCenter(chatId);
                 return;
-            } else if (text === '❓ 帮助') {
-                await this._handleHelp(chatId);
+            } else if (text === '☎️ 客服&售后') {
+                await this._handleCustomerService(chatId);
                 return;
             } else if (text === '💰 充值') {
                 await this._handleRechargeMenu(chatId);
@@ -450,7 +450,7 @@ export class TelegramBotAdapter {
                 break;
             
             case '/help':
-                await this._handleHelp(chatId);
+                await this._handleCustomerService(chatId);
                 break;
 
             default:
@@ -551,23 +551,8 @@ export class TelegramBotAdapter {
         });
     }
 
-    private async _handleHelp(chatId: string): Promise<void> {
-        const helpText = `❓ **帮助中心**
-
-📚 **功能说明：**
-
-💬 **对话功能**
-• 直接发送消息与AI角色对话
-
-💾 **存档功能**
-• 点击对话下方的 [💾 保存对话] 可保存当前进度
-• 点击 [🗂 历史聊天] 可浏览和恢复存档
-
-⚙️ **设置**
-• 点击“⚙️ 设置” 可切换AI模型
-
-💡 更多功能开发中，敬请期待...`;
-        
+    private async _handleCustomerService(chatId: string): Promise<void> {
+        const helpText = await runtimeConfig.getCustomerServiceMessage();
         await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
     }
 
@@ -648,7 +633,7 @@ export class TelegramBotAdapter {
         return withoutTags.replace(/\uFFFD/g, '');
     }
 
-    private async _handleSettings(chatId: string): Promise<void> {
+    private async _handlePersonalCenter(chatId: string): Promise<void> {
         const [currentMode, creditBalance] = await Promise.all([
             this.sessionManager.getUserModelMode(chatId),
             this.creditsRepository?.getBalance(chatId).catch(() => null) ?? Promise.resolve(null),
@@ -664,7 +649,7 @@ export class TelegramBotAdapter {
             ? getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits)
             : null;
         const balanceText = totalCredits === null ? '当前拥有星尘：--' : `当前拥有星尘：${totalCredits}`;
-        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
+        const text = ` **👤 个人中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
         
         await this.bot.sendMessage(chatId, text, {
             parse_mode: 'Markdown',
@@ -724,7 +709,7 @@ export class TelegramBotAdapter {
         try {
             switch (action) {
                 case 'settings_main':
-                    await this._updateSettingsMessage(query);
+                    await this._updatePersonalCenterMessage(query);
                     break;
                 
                 case 'settings_model_select':
@@ -740,7 +725,7 @@ export class TelegramBotAdapter {
                     if (query.message?.message_id) {
                         await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
                     }
-                    await this._handleSettings(chatId);
+                    await this._handlePersonalCenter(chatId);
                     break;
 
                 case 'settings_back_from_model':
@@ -748,7 +733,7 @@ export class TelegramBotAdapter {
                     if (query.message?.message_id) {
                         await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
                     }
-                    await this._handleSettings(chatId);
+                    await this._handlePersonalCenter(chatId);
                     break;
 
                 case 'close_settings':
@@ -952,7 +937,7 @@ export class TelegramBotAdapter {
         }
     }
 
-    private async _updateSettingsMessage(query: TelegramBot.CallbackQuery): Promise<void> {
+    private async _updatePersonalCenterMessage(query: TelegramBot.CallbackQuery): Promise<void> {
         const chatId = query.message?.chat.id.toString();
         if (!chatId) return;
 
@@ -968,7 +953,7 @@ export class TelegramBotAdapter {
             ? getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits)
             : null;
         const balanceText = totalCredits === null ? '当前拥有星尘：--' : `当前拥有星尘：${totalCredits}`;
-        const text = `⚙️ **设置中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
+        const text = `👤 **个人中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
 
         await this.bot.editMessageText(text, {
             chat_id: chatId,

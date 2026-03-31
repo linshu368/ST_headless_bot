@@ -428,6 +428,26 @@ export class RuntimeConfigService {
         return this.get<string>('insufficient_credits_message', '星尘不足啦，唤醒更多星尘，让故事继续......');
     }
 
+    /** 获取客服帮助文案 */
+    async getCustomerServiceMessage(): Promise<string> {
+        const fallback = `❓ **帮助中心**
+
+📚 **功能说明：**
+
+💬 **对话功能**
+• 直接发送消息与AI角色对话
+
+💾 **存档功能**
+• 点击对话下方的 [💾 保存对话] 可保存当前进度
+• 点击 [🗂 历史聊天] 可浏览和恢复存档
+
+👤 **个人中心**
+• 点击“👤个人中心” 可切换AI模型
+
+💡 更多功能开发中，敬请期待...`;
+        return this.get<string>('customer_service_message', fallback);
+    }
+
     /** 获取 P0 崩溃级兜底文案 */
     async getP0FallbackMessage(): Promise<string> {
         return this.get<string>('fallback_message_p0', config.fallbackMessages.p0);
@@ -583,7 +603,7 @@ export class RuntimeConfigService {
             };
         }
 
-        if (key === 'system_instructions' || key === 'welcome_message' || key.startsWith('payment_')) {
+        if (key === 'system_instructions' || key === 'welcome_message' || key === 'customer_service_message' || key === 'insufficient_credits_message' || key.startsWith('payment_')) {
             const text = typeof value === 'string' ? value : '';
             return {
                 length: text.length,

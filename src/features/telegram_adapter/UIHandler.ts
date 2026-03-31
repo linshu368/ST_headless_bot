@@ -6,8 +6,8 @@ export class UIHandler {
         return {
             keyboard: [
                 [{ text: "🎭 选择角色" }, { text: "💰 充值" }],
-                [{ text: "🗂 历史聊天" },{ text: "⚙️ 设置" }],
-                [{ text: "❓ 帮助" }]
+                [{ text: "🗂 历史聊天" },{ text: "👤 个人中心" }],
+                [{ text: "☎️ 客服&售后" }]
             ],
             resize_keyboard: true
         };
@@ -28,7 +28,7 @@ export class UIHandler {
         return {
             inline_keyboard: [
                 [{ text: "🤖 模型选择", callback_data: "settings_model_select" }],
-                [{ text: "关闭设置", callback_data: "close_settings" }]
+                [{ text: "关闭个人中心", callback_data: "close_settings" }]
             ]
         };
     }
