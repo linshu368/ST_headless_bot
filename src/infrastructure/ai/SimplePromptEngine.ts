@@ -111,6 +111,7 @@ export class SimplePromptEngine implements ISTEngine {
         const isAnthropicClaude = typeof model === 'string' && model.startsWith('anthropic/claude');
 
         if (isOpenRouter && isAnthropicClaude) {
+            // Breakpoint 1: system prompt
             for (const msg of messages) {
                 if (msg.role === 'system' && typeof msg.content === 'string') {
                     msg.content = [{
@@ -121,16 +122,25 @@ export class SimplePromptEngine implements ISTEngine {
                     break;
                 }
             }
+
+            // Breakpoint 2: the last message before current user input (tail of history).
+            // This ensures that on the next turn, the entire prefix
+            // (system + all prior history) can be served from cache,
+            // and only the newly appended user message is billed at full price.
+            if (messages.length >= 3) {
+                const lastHistoryIdx = messages.length - 2;
+                const lastHistoryMsg = messages[lastHistoryIdx];
+                if (typeof lastHistoryMsg.content === 'string') {
+                    lastHistoryMsg.content = [{
+                        type: 'text',
+                        text: lastHistoryMsg.content,
+                        cache_control: { type: 'ephemeral' },
+                    }];
+                }
+            }
         }
 
         const body: any = { model, messages, stream };
-
-        if (isOpenRouter) {
-            body.provider = {
-                sort: 'latency',
-                ignore: ['wandb', 'deepinfra', 'sambanova', 'siliconflow'],
-            };
-        }
 
         return body;
     }
