@@ -19,6 +19,16 @@ if [[ ! -s "$DIFF_FILE" ]]; then
   exit 0
 fi
 
+# 计算新增和删除的代码行数总和（仅统计实际变更的行，不包含 diff 的上下文等其他行）
+# git diff --cached --numstat 会输出每行的：新增行数 删除行数 文件名
+TOTAL_CHANGES=$(git diff --cached --numstat | awk '{s+=$1+$2} END {print (s=="") ? 0 : s}')
+
+if [[ "$TOTAL_CHANGES" -lt 30 ]]; then
+  echo "⚡ 变更行数少于 30 行 (当前: ${TOTAL_CHANGES} 行)，跳过 AI 总结，直接提交" >&2
+  # 因为跳过 AI，我们不覆写 $COMMIT_MSG_FILE，让 Git 使用用户已经输入的 commit message
+  exit 0
+fi
+
 # 调用 TypeScript 脚本，生成 JSON
 OUT_JSON="$($TS_NODE_CMD "$PROJECT_ROOT/ops/git/commit/gen_commit_msg.ts" \
   --diff "$DIFF_FILE")"
