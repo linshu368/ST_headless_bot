@@ -257,10 +257,19 @@ export class SimplePromptEngine implements ISTEngine {
     ): AsyncGenerator<string> {
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
-        let isFirstChunk = true;
+        let firstSseEventLogged = false;
+        let yieldedTokenCount = 0;
+        let lastFinishReason: string | null = null;
+        let lastRawEvent: string | null = null;
 
         const body = response.body;
         if (!body) {
+            logger.warn({
+                kind: 'infra',
+                component: COMPONENT,
+                message: 'SSE stream body is null',
+                meta: { model: trace?.model_from_stream || this.config.openai_model },
+            });
             if (trace) trace.streamCompleted = true;
             return;
         }
@@ -272,28 +281,91 @@ export class SimplePromptEngine implements ISTEngine {
                 buffer = lines.pop() ?? '';
 
                 for (const line of lines) {
-                    const delta = this._extractDelta(line, trace, isFirstChunk, fetchStartMs);
-                    if (delta === null) continue;
-                    if (delta === '[DONE]') {
+                    const result = this._extractDelta(line, trace, !firstSseEventLogged, fetchStartMs);
+                    
+                    // Track raw SSE events for diagnostics
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('data:') && trimmed.slice(5).trim() !== '' && trimmed.slice(5).trim() !== '[DONE]') {
+                        lastRawEvent = trimmed.slice(5).trim().slice(0, 500);
+                    }
+
+                    // Mark first SSE event as logged (regardless of whether it had content)
+                    if (!firstSseEventLogged && result !== null) {
+                        firstSseEventLogged = true;
+                    }
+                    // Also mark on any parseable data line to avoid repeated "first token" logs
+                    if (!firstSseEventLogged && trimmed.startsWith('data:') && trimmed.slice(5).trim() !== '') {
+                        firstSseEventLogged = true;
+                    }
+
+                    if (result === null) continue;
+                    if (result === '[DONE]') {
                         if (trace) trace.streamCompleted = true;
+
+                        // [Diagnostic] Log if stream completed without any content
+                        if (yieldedTokenCount === 0) {
+                            logger.warn({
+                                kind: 'infra',
+                                component: COMPONENT,
+                                message: 'SSE stream completed with [DONE] but yielded zero content tokens',
+                                meta: {
+                                    model: this.config.openai_model,
+                                    generationId: trace?.generation_id || null,
+                                    lastFinishReason,
+                                    lastRawEvent,
+                                },
+                            });
+                        }
                         return;
                     }
-                    if (isFirstChunk) isFirstChunk = false;
-                    yield delta;
+                    yieldedTokenCount++;
+                    yield result;
                 }
             }
 
             // Flush remaining buffer
             if (buffer.trim().length > 0) {
-                const delta = this._extractDelta(buffer, trace, isFirstChunk, fetchStartMs);
-                if (delta && delta !== '[DONE]') {
-                    yield delta;
+                const result = this._extractDelta(buffer, trace, !firstSseEventLogged, fetchStartMs);
+                if (result && result !== '[DONE]') {
+                    yieldedTokenCount++;
+                    yield result;
                 }
             }
 
             if (trace) trace.streamCompleted = true;
+
+            // [Diagnostic] Log if stream ended (no [DONE]) without any content
+            if (yieldedTokenCount === 0) {
+                logger.warn({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'SSE stream ended without yielding any content tokens (no [DONE] received)',
+                    meta: {
+                        model: this.config.openai_model,
+                        generationId: trace?.generation_id || null,
+                        lastFinishReason,
+                        lastRawEvent,
+                    },
+                });
+            }
         } catch (error) {
             if (trace) trace.streamCompleted = false;
+
+            // [Diagnostic] Include token count in error context
+            if (yieldedTokenCount === 0) {
+                logger.warn({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'SSE stream errored with zero content tokens yielded',
+                    meta: {
+                        model: this.config.openai_model,
+                        generationId: trace?.generation_id || null,
+                        lastFinishReason,
+                        lastRawEvent,
+                        error: error instanceof Error ? error.message : String(error),
+                    },
+                });
+            }
             throw error;
         }
     }
@@ -301,7 +373,7 @@ export class SimplePromptEngine implements ISTEngine {
     private _extractDelta(
         line: string,
         trace?: any,
-        isFirstChunk?: boolean,
+        isFirstSseEvent?: boolean,
         fetchStartMs?: number,
     ): string | null {
         const trimmed = line.trim();
@@ -322,7 +394,7 @@ export class SimplePromptEngine implements ISTEngine {
                 }
             }
 
-            if (isFirstChunk) {
+            if (isFirstSseEvent) {
                 logger.info({
                     kind: 'infra',
                     component: COMPONENT,
@@ -334,13 +406,41 @@ export class SimplePromptEngine implements ISTEngine {
                 });
             }
 
+            // [Diagnostic] Capture finish_reason for empty-stream diagnosis
+            const finishReason = payload?.choices?.[0]?.finish_reason;
+
             const delta = payload?.choices?.[0]?.delta?.content;
             if (typeof delta === 'string' && delta.length > 0) {
                 return delta;
             }
+
+            // [Diagnostic] Log non-content SSE events at debug level for post-incident analysis
+            // This covers: role-only deltas, finish_reason events, content_filter events, etc.
+            if (payload?.choices?.[0]) {
+                const choice = payload.choices[0];
+                logger.debug({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'SSE event without content delta',
+                    meta: {
+                        generationId: payload.id,
+                        model: payload.model,
+                        deltaRole: choice.delta?.role || undefined,
+                        finishReason: choice.finish_reason || undefined,
+                        contentFilterResults: choice.content_filter_results || undefined,
+                        rawChoice: JSON.stringify(choice).slice(0, 300),
+                    },
+                });
+            }
+
             return null;
         } catch {
-            logger.warn({ kind: 'sys', component: COMPONENT, message: 'Failed to parse stream chunk' });
+            logger.warn({
+                kind: 'sys',
+                component: COMPONENT,
+                message: 'Failed to parse stream chunk',
+                meta: { rawData: data.slice(0, 300) },
+            });
             return null;
         }
     }

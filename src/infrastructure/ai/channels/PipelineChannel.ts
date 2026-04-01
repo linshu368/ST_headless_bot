@@ -281,7 +281,7 @@ export class PipelineChannel implements IAIChannel {
                     return;
                 } else {
                     // 如果流没内容（比如刚连上就断了，且没抛 TTFT），视为失败
-                    throw new Error("Empty response stream");
+                    throw new Error(`Empty response stream (model=${profile.model}, profileId=${profile.id}, step=${i + 1}/${this.steps.length})`);
                 }
 
             } catch (error) {
@@ -298,7 +298,7 @@ export class PipelineChannel implements IAIChannel {
                     component: 'PipelineChannel', 
                     message: `Pipeline step failed`,
                     error,
-                    meta: { pipelineId: this.pipelineId, profileId: profile.id, attempt: i + 1 }
+                    meta: { pipelineId: this.pipelineId, profileId: profile.id, model: profile.model, attempt: i + 1 }
                 });
 
                 if (isLastAttempt) {
