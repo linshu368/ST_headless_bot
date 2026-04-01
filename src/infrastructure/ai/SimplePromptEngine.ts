@@ -189,6 +189,8 @@ export class SimplePromptEngine implements ISTEngine {
 
         if (trace) {
             trace.finalContext = messages;
+            // [Step1] Propagate apiKey into trace so SimpleChat backfill guard can see it
+            trace.apiKey = this.config.api_key_openai || null;
         }
 
         const body = this._buildRequestBody(messages, false);
@@ -223,6 +225,8 @@ export class SimplePromptEngine implements ISTEngine {
 
             if (trace) {
                 trace.finalContext = messages;
+                // [Step1] Propagate apiKey into trace so SimpleChat backfill guard can see it
+                trace.apiKey = self.config.api_key_openai || null;
             }
 
             const body = self._buildRequestBody(messages, true);

@@ -525,6 +525,24 @@ export class SimpleChat {
                 credits_deducted: 0,
                 credits_account: null,
             }).then(messageId => {
+                // [Step1] Diagnose backfill guard: log when any required field is missing
+                if (!messageId || !executionTrace.generation_id || !executionTrace.apiKey) {
+                    logger.warn({
+                        kind: 'infra',
+                        component: COMPONENT,
+                        message: 'Backfill guard: missing required fields — stats retrieval skipped',
+                        meta: {
+                            hasMessageId: !!messageId,
+                            hasGenerationId: !!executionTrace.generation_id,
+                            hasApiKey: !!executionTrace.apiKey,
+                            generationId: executionTrace.generation_id || null,
+                            streamCompleted: executionTrace.streamCompleted,
+                            model: executionTrace.model,
+                            userId,
+                        },
+                    });
+                }
+
                 if (messageId && executionTrace.generation_id && executionTrace.apiKey) {
                     this._backfillOpenRouterStats(messageId, executionTrace.generation_id, executionTrace.apiKey).catch(err => {
                         logger.error({ kind: 'infra', component: COMPONENT, message: 'Backfill stats failed', error: err });
