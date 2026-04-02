@@ -92,8 +92,16 @@ class MetricsCollector {
         this._incrModelMetric(model, 'firstchunk_timeout');
     }
 
-    incrementModelError(model: string): void {
-        this._incrModelMetric(model, 'error');
+    incrementModelEmptyStream(model: string): void {
+        this._incrModelMetric(model, 'empty_stream');
+    }
+
+    incrementModelApiError(model: string): void {
+        this._incrModelMetric(model, 'api_error');
+    }
+
+    incrementModelNetworkError(model: string): void {
+        this._incrModelMetric(model, 'network_error');
     }
 
     incrementModelTruncated(model: string): void {

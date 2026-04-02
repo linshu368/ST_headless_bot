@@ -217,7 +217,7 @@ export class PipelineChannel implements IAIChannel {
                 const rawStream = engine.generateStream(userInput, context.trace);
                 
                 // Get timeouts from config/profile
-                const ttftMs = profile.firstchunk_timeout || 7000; // Default 7s if not set
+                const ttftMs = profile.firstchunk_timeout || 4000; // Default 7s if not set
                 const interChunkMs = interChunkDefaultMs || config.timeouts.interChunk;
                 const totalMs = profile.total_timeout;
                 logger.debug({
@@ -290,7 +290,14 @@ export class PipelineChannel implements IAIChannel {
                 engine.abort();
 
                 if (!stepMeta._isTtftTimeout) {
-                    metrics.incrementModelError(profile.model);
+                    const errMsg = error instanceof Error ? error.message : String(error);
+                    if (errMsg.includes('Empty response stream')) {
+                        metrics.incrementModelEmptyStream(profile.model);
+                    } else if (errMsg.startsWith('LLM API ')) {
+                        metrics.incrementModelApiError(profile.model);
+                    } else {
+                        metrics.incrementModelNetworkError(profile.model);
+                    }
                 }
 
                 logger.warn({ 

@@ -32,9 +32,16 @@ const mockRaw: RawMetrics = {
         ['claude-sonnet-4', 3],
         ['gpt-4o', 1],
     ]),
-    modelError: new Map([
-        ['grok-3', 5],
-        ['claude-sonnet-4', 2],
+    modelEmptyStream: new Map([
+        ['grok-3', 2],
+        ['claude-sonnet-4', 1],
+    ]),
+    modelApiError: new Map([
+        ['grok-3', 2],
+        ['claude-sonnet-4', 1],
+    ]),
+    modelNetworkError: new Map([
+        ['grok-3', 1],
     ]),
     modelTruncated: new Map([
         ['grok-3', 3],

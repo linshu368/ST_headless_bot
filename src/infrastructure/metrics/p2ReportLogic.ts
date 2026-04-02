@@ -33,7 +33,9 @@ export interface ModelStat {
     totalCalls: number;
     // 用户不可感知
     firstchunkTimeout: number;
-    error: number;
+    emptyStream: number;
+    apiError: number;
+    networkError: number;
     invisibleFailureRate: string;
     // 用户可感知
     truncated: number;
@@ -92,7 +94,9 @@ export interface RawMetrics {
 
     modelTotalCalls: Map<string, number>;
     modelFirstchunkTimeout: Map<string, number>;
-    modelError: Map<string, number>;
+    modelEmptyStream: Map<string, number>;
+    modelApiError: Map<string, number>;
+    modelNetworkError: Map<string, number>;
     modelTruncated: Map<string, number>;
 }
 
@@ -130,28 +134,34 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
     const {
         totalRequests, firstChunkGt8s, totalDurationGt25s,
         step2Success, step3Success, noDeduction, allStepsFailed,
-        modelTotalCalls, modelFirstchunkTimeout, modelError, modelTruncated,
+        modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError, modelTruncated,
     } = raw;
 
     // 合并所有出现过的模型名
     const allModels = new Set([
         ...modelTotalCalls.keys(),
         ...modelFirstchunkTimeout.keys(),
-        ...modelError.keys(),
+        ...modelEmptyStream.keys(),
+        ...modelApiError.keys(),
+        ...modelNetworkError.keys(),
         ...modelTruncated.keys(),
     ]);
 
     const fullModelStats: ModelStat[] = [...allModels].map(model => {
         const total = modelTotalCalls.get(model) || 0;
         const timeout = modelFirstchunkTimeout.get(model) || 0;
-        const err = modelError.get(model) || 0;
+        const empty = modelEmptyStream.get(model) || 0;
+        const api = modelApiError.get(model) || 0;
+        const network = modelNetworkError.get(model) || 0;
         const trunc = modelTruncated.get(model) || 0;
         return {
             model,
             totalCalls: total,
             firstchunkTimeout: timeout,
-            error: err,
-            invisibleFailureRate: rate(timeout + err, total),
+            emptyStream: empty,
+            apiError: api,
+            networkError: network,
+            invisibleFailureRate: rate(timeout + empty + api + network, total),
             truncated: trunc,
             visibleFailureRate: rate(trunc, total),
         };
@@ -264,7 +274,7 @@ export function buildCard(data: P2ReportData): object {
                 `📦 **${m.model}**\u3000\u3000调用 ${m.totalCalls}`,
                 `╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌`,
                 `\u3000\u3000🔴 用户可感知\u3000\u3000截断 ${m.truncated}\u3000\u3000失败率 ${m.visibleFailureRate}`,
-                `\u3000\u3000⚪ 用户不可感知\u3000超时 ${m.firstchunkTimeout} · 报错 ${m.error}\u3000\u3000失败率 ${m.invisibleFailureRate}`,
+                `\u3000\u3000⚪ 用户不可感知\u3000超时 ${m.firstchunkTimeout} · 空流 ${m.emptyStream} · API报错 ${m.apiError} · 网络 ${m.networkError}\u3000\u3000失败率 ${m.invisibleFailureRate}`,
             );
         }
         modelLines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

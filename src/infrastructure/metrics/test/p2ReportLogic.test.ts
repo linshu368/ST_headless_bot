@@ -6,7 +6,7 @@ import {
     buildCard,
     type RawMetrics,
     type P2ReportData,
-} from './p2ReportLogic.js';
+} from '../p2ReportLogic.js';
 
 // ==================== 辅助函数 ====================
 
@@ -22,7 +22,9 @@ function makeRaw(overrides: Partial<RawMetrics> = {}): RawMetrics {
         allStepsFailed: 0,
         modelTotalCalls: new Map(),
         modelFirstchunkTimeout: new Map(),
-        modelError: new Map(),
+        modelEmptyStream: new Map(),
+        modelApiError: new Map(),
+        modelNetworkError: new Map(),
         modelTruncated: new Map(),
         ...overrides,
     };
@@ -116,7 +118,9 @@ describe('computeReport()', () => {
             allStepsFailed: 3,
             modelTotalCalls: new Map([['gpt-4', 80], ['claude-3', 40]]),
             modelFirstchunkTimeout: new Map([['gpt-4', 2], ['claude-3', 1]]),
-            modelError: new Map([['gpt-4', 3]]),
+            modelEmptyStream: new Map([['gpt-4', 1]]),
+            modelApiError: new Map([['gpt-4', 1]]),
+            modelNetworkError: new Map([['gpt-4', 1]]),
             modelTruncated: new Map([['gpt-4', 1], ['claude-3', 2]]),
         });
 
@@ -188,18 +192,23 @@ describe('computeReport()', () => {
         expect(names).toEqual(['large', 'medium', 'small']);
     });
 
-    it('模型失败率 = (timeout + error) / totalCalls', () => {
+    it('不可感知失败率 = (timeout + emptyStream + apiError + networkError) / totalCalls', () => {
         const raw = makeRaw({
             modelTotalCalls: new Map([['gpt-4', 200]]),
-            modelFirstchunkTimeout: new Map([['gpt-4', 6]]),
-            modelError: new Map([['gpt-4', 4]]),
+            modelFirstchunkTimeout: new Map([['gpt-4', 3]]),
+            modelEmptyStream: new Map([['gpt-4', 2]]),
+            modelApiError: new Map([['gpt-4', 3]]),
+            modelNetworkError: new Map([['gpt-4', 2]]),
             modelTruncated: new Map([['gpt-4', 2]]),
         });
 
         const data = computeReport(raw, 6, FIXED_NOW);
 
-        // failureRate = (6+4)/200 = 5.00%（注意 truncated 不计入失败率分子）
+        // invisibleFailureRate = (3+2+3+2)/200 = 5.00%（truncated 不计入）
         expect(data.modelStats[0].invisibleFailureRate).toBe('5.00%');
+        expect(data.modelStats[0].emptyStream).toBe(2);
+        expect(data.modelStats[0].apiError).toBe(3);
+        expect(data.modelStats[0].networkError).toBe(2);
         expect(data.modelStats[0].truncated).toBe(2);
     });
 
@@ -216,9 +225,9 @@ describe('computeReport()', () => {
         expect(data.omittedModelCount).toBe(3);
     });
 
-    it('模型仅出现在 error map 而不在 totalCalls 中，totalCalls 视为 0', () => {
+    it('模型仅出现在 apiError map 而不在 totalCalls 中，totalCalls 视为 0', () => {
         const raw = makeRaw({
-            modelError: new Map([['ghost-model', 5]]),
+            modelApiError: new Map([['ghost-model', 5]]),
         });
 
         const data = computeReport(raw, 6, FIXED_NOW);
@@ -226,7 +235,7 @@ describe('computeReport()', () => {
         expect(data.modelStats).toHaveLength(1);
         expect(data.modelStats[0].model).toBe('ghost-model');
         expect(data.modelStats[0].totalCalls).toBe(0);
-        expect(data.modelStats[0].error).toBe(5);
+        expect(data.modelStats[0].apiError).toBe(5);
         // 0 分母 → 0.00%
         expect(data.modelStats[0].invisibleFailureRate).toBe('0.00%');
     });
@@ -237,7 +246,7 @@ describe('computeReport()', () => {
         const data = computeReport(makeRaw(), 6, FIXED_NOW);
 
         expect(data.periodLabel).toContain('6个整点桶');
-        expect(data.generatedAt).toBe(FIXED_NOW.toISOString());
+        expect(data.generatedAt).toBe('2026-03-25T10:00:00+08:00');
     });
 });
 
