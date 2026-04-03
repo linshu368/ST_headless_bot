@@ -12,7 +12,7 @@ import {
     canCheckIn,
     getNextCheckinTime,
     getRemainingCooldown,
-    CHECKIN_REWARD,
+    DEFAULT_CHECKIN_REWARD,
     CHECKIN_COOLDOWN_MS,
 } from '../rules/checkinRules.js';
 import { CheckinUseCase } from '../usecases/CheckinUseCase.js';
@@ -48,9 +48,9 @@ async function runSuite(title: string, tests: TestCase[]): Promise<void> {
 
 const partA: TestCase[] = [
     {
-        name: 'CHECKIN_REWARD = 60',
+        name: 'DEFAULT_CHECKIN_REWARD = 60',
         fn: async () => {
-            assert.equal(CHECKIN_REWARD, 60);
+            assert.equal(DEFAULT_CHECKIN_REWARD, 60);
         },
     },
     {

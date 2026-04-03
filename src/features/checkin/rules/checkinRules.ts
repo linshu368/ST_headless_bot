@@ -3,8 +3,8 @@
  * 纯函数，不涉及 IO
  */
 
-/** 签到奖励（星尘），计入 bonus_credits */
-export const CHECKIN_REWARD = 60;
+/** 签到奖励默认值（星尘），计入 bonus_credits */
+export const DEFAULT_CHECKIN_REWARD = 60;
 
 /** 签到冷却时间（毫秒）：24 小时 */
 export const CHECKIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;

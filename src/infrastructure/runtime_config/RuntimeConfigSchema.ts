@@ -169,7 +169,8 @@ export const RuntimeConfigSchema = {
             case 'history_retention_count':
             case 'session_timeout_minutes':
             case 'streaming_first_update_chars':
-            case 'streaming_regular_update_interval_sec': {
+            case 'streaming_regular_update_interval_sec':
+            case 'checkin_reward': {
                 const value = parseNumber(input.key, input.value, input.key);
                 return { key: input.key, value: value as T, version, updated_at };
             }

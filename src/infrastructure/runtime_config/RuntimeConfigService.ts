@@ -418,6 +418,11 @@ export class RuntimeConfigService {
         return this.get<string>('system_instructions', config.telegram.instruction_enhancement.system_instructions);
     }
 
+    /** 获取签到奖励（星尘） */
+    async getCheckinReward(): Promise<number> {
+        return this.get<number>('checkin_reward', 60);
+    }
+
     /** 获取 Bot 启动欢迎语 */
     async getWelcomeMessage(): Promise<string> {
         return this.get<string>('welcome_message', config.telegram.welcome_message);

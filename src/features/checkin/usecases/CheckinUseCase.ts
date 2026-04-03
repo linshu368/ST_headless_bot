@@ -1,6 +1,7 @@
 import { logger } from '../../../platform/logger.js';
 import type { ICheckinRepository } from '../ports/ICheckinRepository.js';
-import { canCheckIn, getNextCheckinTime, getRemainingCooldown, CHECKIN_REWARD } from '../rules/checkinRules.js';
+import { canCheckIn, getNextCheckinTime, getRemainingCooldown } from '../rules/checkinRules.js';
+import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 
 const COMPONENT = 'CheckinUseCase';
 
@@ -58,17 +59,20 @@ export class CheckinUseCase {
             }
         }
 
-        // 2. 执行原子签到（DB 层再次校验冷却，防并发）
-        const result = await this.repo.performCheckin(userId, CHECKIN_REWARD);
+        // 2. 获取当前签到奖励金额（来自 runtime_config 或降级）
+        const rewardAmount = await runtimeConfig.getCheckinReward();
+
+        // 3. 执行原子签到（DB 层再次校验冷却，防并发）
+        const result = await this.repo.performCheckin(userId, rewardAmount);
 
         if (result.success) {
             logger.info({
                 kind: 'biz',
                 component: COMPONENT,
                 message: 'Checkin succeeded',
-                meta: { userId, reward: CHECKIN_REWARD },
+                meta: { userId, reward: rewardAmount },
             });
-            return { success: true, reward: CHECKIN_REWARD };
+            return { success: true, reward: rewardAmount };
         }
 
         // RPC 层返回冷却（并发场景：预检通过但 RPC 拒绝）
