@@ -282,6 +282,7 @@ export class SimplePromptEngine implements ISTEngine {
 
                 for (const line of lines) {
                     const result = this._extractDelta(line, trace, !firstSseEventLogged, fetchStartMs);
+                    if (trace?.finishReason) lastFinishReason = trace.finishReason;
                     
                     // Track raw SSE events for diagnostics
                     const trimmed = line.trim();
@@ -406,8 +407,10 @@ export class SimplePromptEngine implements ISTEngine {
                 });
             }
 
-            // [Diagnostic] Capture finish_reason for empty-stream diagnosis
             const finishReason = payload?.choices?.[0]?.finish_reason;
+            if (finishReason && trace) {
+                trace.finishReason = finishReason;
+            }
 
             const delta = payload?.choices?.[0]?.delta?.content;
             if (typeof delta === 'string' && delta.length > 0) {

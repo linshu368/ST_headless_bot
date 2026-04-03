@@ -294,6 +294,7 @@ export class SimpleChat {
             generation_id: null as string | null,
             apiKey: null as string | null,
             streamCompleted: false,
+            finishReason: null as string | null,
         };
 
         const previewHistory = (history: OpenAIMessage[], limit = 3) => {
@@ -476,7 +477,7 @@ export class SimpleChat {
                 kind: 'biz', 
                 component: COMPONENT, 
                 message: 'Streaming chat completed', 
-                meta: { replyLength: accumulatedText.length, latencyMs: Date.now() - startedAtMs } 
+                meta: { replyLength: accumulatedText.length, latencyMs: Date.now() - startedAtMs, streamCompleted: executionTrace.streamCompleted, finishReason: executionTrace.finishReason } 
             });
 
             // P2 metrics: 字段1 首字响应>8s / 字段2 总耗时>25s
@@ -502,7 +503,12 @@ export class SimpleChat {
                 return 'bonus_credits';
             };
 
-            const shouldDeduct = executionTrace.streamCompleted && !!this.creditsRepository;
+            const TRUNCATED_FINISH_REASONS = new Set(['length', 'content_filter']);
+            const providerTruncated = executionTrace.finishReason !== null
+                && TRUNCATED_FINISH_REASONS.has(executionTrace.finishReason);
+            const shouldDeduct = executionTrace.streamCompleted
+                && !providerTruncated
+                && !!this.creditsRepository;
             const deductTier = resolveTierFromMode(userMode);
             const deductCost = getCostForTier(deductTier, aiConfigSource.tier_costs);
 
@@ -559,7 +565,7 @@ export class SimpleChat {
                                 message: 'Credits deducted',
                                 meta: { userId, cost: deductCost, tier: deductTier, account,
                                         mainDeducted: result.mainDeducted, bonusDeducted: result.bonusDeducted,
-                                        model: executionTrace.model } });
+                                        model: executionTrace.model, finishReason: executionTrace.finishReason } });
                             if (messageId) {
                                 this.messageRepository.updateCreditsDeducted(messageId, totalDeducted, account);
                             }
@@ -607,7 +613,12 @@ export class SimpleChat {
             if (!executionTrace.streamCompleted) {
                 logger.info({ kind: 'biz', component: COMPONENT,
                     message: 'Skipping credit deduction (stream not naturally completed)',
-                    meta: { userId, streamCompleted: executionTrace.streamCompleted } });
+                    meta: { userId, streamCompleted: executionTrace.streamCompleted, finishReason: executionTrace.finishReason } });
+                metrics.incrementNoDeduction();
+            } else if (providerTruncated) {
+                logger.info({ kind: 'biz', component: COMPONENT,
+                    message: 'Skipping credit deduction (provider truncated)',
+                    meta: { userId, finishReason: executionTrace.finishReason } });
                 metrics.incrementNoDeduction();
             }
         } else {

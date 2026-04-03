@@ -188,6 +188,7 @@ export class PipelineChannel implements IAIChannel {
                 // so we must clear it here to ensure each step captures its own generation_id.
                 if (context?.trace) {
                     context.trace.generation_id = null;
+                    context.trace.finishReason = null;
                 }
 
                 // 0b. Reset engine state before retries to prevent chat pollution.
