@@ -25,7 +25,8 @@ function makeRaw(overrides: Partial<RawMetrics> = {}): RawMetrics {
         modelEmptyStream: new Map(),
         modelApiError: new Map(),
         modelNetworkError: new Map(),
-        modelTruncated: new Map(),
+        modelStrategyTruncated: new Map(),
+        modelProviderTruncated: new Map(),
         ...overrides,
     };
 }
@@ -106,8 +107,8 @@ describe('computeReport()', () => {
         //   totalModelCalls === totalRequests + step2Success + 2*step3Success + 2*allStepsFailed
         //   80 + 40 = 100 + 10 + 2*2 + 2*3 = 120 ✓
         // check2 成立：
-        //   noDeduction >= totalTruncated + allStepsFailed
-        //   8 >= (1+2) + 3 = 6 ✓
+        //   noDeduction >= strategyTruncated + providerTruncated + allStepsFailed
+        //   8 >= (1+1) + 1 + 3 = 6 ✓
         const raw = makeRaw({
             totalRequests: 100,
             firstChunkGt8s: 5,
@@ -121,7 +122,8 @@ describe('computeReport()', () => {
             modelEmptyStream: new Map([['gpt-4', 1]]),
             modelApiError: new Map([['gpt-4', 1]]),
             modelNetworkError: new Map([['gpt-4', 1]]),
-            modelTruncated: new Map([['gpt-4', 1], ['claude-3', 2]]),
+            modelStrategyTruncated: new Map([['gpt-4', 1], ['claude-3', 1]]),
+            modelProviderTruncated: new Map([['claude-3', 1]]),
         });
 
         const data = computeReport(raw, 6, FIXED_NOW);
@@ -161,13 +163,14 @@ describe('computeReport()', () => {
         expect(check1.right).toBe(120);
     });
 
-    it('check2 失败：没扣积分 < 截断 + 全部失败', () => {
-        // noDeduction=1，totalTruncated=5，allStepsFailed=3 → 1 < 5+3=8
+    it('check2 失败：没扣积分 < 策略截断 + 供应商截断 + 全部失败', () => {
+        // noDeduction=1，strategyTruncated=3，providerTruncated=2，allStepsFailed=3 → 1 < 3+2+3=8
         const raw = makeRaw({
             totalRequests: 100,
             noDeduction: 1,
             allStepsFailed: 3,
-            modelTruncated: new Map([['gpt-4', 5]]),
+            modelStrategyTruncated: new Map([['gpt-4', 3]]),
+            modelProviderTruncated: new Map([['gpt-4', 2]]),
             modelTotalCalls: new Map([['gpt-4', 100]]),
         });
 
@@ -199,7 +202,8 @@ describe('computeReport()', () => {
             modelEmptyStream: new Map([['gpt-4', 2]]),
             modelApiError: new Map([['gpt-4', 3]]),
             modelNetworkError: new Map([['gpt-4', 2]]),
-            modelTruncated: new Map([['gpt-4', 2]]),
+            modelStrategyTruncated: new Map([['gpt-4', 1]]),
+            modelProviderTruncated: new Map([['gpt-4', 1]]),
         });
 
         const data = computeReport(raw, 6, FIXED_NOW);
@@ -209,7 +213,8 @@ describe('computeReport()', () => {
         expect(data.modelStats[0].emptyStream).toBe(2);
         expect(data.modelStats[0].apiError).toBe(3);
         expect(data.modelStats[0].networkError).toBe(2);
-        expect(data.modelStats[0].truncated).toBe(2);
+        expect(data.modelStats[0].strategyTruncated).toBe(1);
+        expect(data.modelStats[0].providerTruncated).toBe(1);
     });
 
     it('超过 12 个模型时截断并显示省略数量', () => {

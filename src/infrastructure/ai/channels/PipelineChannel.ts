@@ -277,7 +277,7 @@ export class PipelineChannel implements IAIChannel {
 
                     if (i + 1 === 2) metrics.incrementStep2Success();
                     if (i + 1 === 3) metrics.incrementStep3Success();
-                    if (!stepMeta.streamCompleted) metrics.incrementModelTruncated(profile.model);
+                    if (!stepMeta.streamCompleted) metrics.incrementModelStrategyTruncated(profile.model);
 
                     return;
                 } else {

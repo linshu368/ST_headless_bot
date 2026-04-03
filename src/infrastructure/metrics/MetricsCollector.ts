@@ -104,8 +104,12 @@ class MetricsCollector {
         this._incrModelMetric(model, 'network_error');
     }
 
-    incrementModelTruncated(model: string): void {
-        this._incrModelMetric(model, 'truncated');
+    incrementModelStrategyTruncated(model: string): void {
+        this._incrModelMetric(model, 'strategy_truncated');
+    }
+
+    incrementModelProviderTruncated(model: string): void {
+        this._incrModelMetric(model, 'provider_truncated');
     }
 
     // ==================== 读取（供聚合层使用） ====================

@@ -114,7 +114,8 @@ class P2ReportService {
         const [
             totalRequests, firstChunkGt8s, totalDurationGt25s,
             step2Success, step3Success, noDeduction, allStepsFailed,
-            modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError, modelTruncated,
+            modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError,
+            modelStrategyTruncated, modelProviderTruncated,
         ] = await Promise.all([
             metrics.sumLastHours('total_requests', hours),
             metrics.sumLastHours('first_chunk_gt8s', hours),
@@ -128,13 +129,15 @@ class P2ReportService {
             metrics.sumModelMetricLastHours('empty_stream', hours),
             metrics.sumModelMetricLastHours('api_error', hours),
             metrics.sumModelMetricLastHours('network_error', hours),
-            metrics.sumModelMetricLastHours('truncated', hours),
+            metrics.sumModelMetricLastHours('strategy_truncated', hours),
+            metrics.sumModelMetricLastHours('provider_truncated', hours),
         ]);
 
         return {
             totalRequests, firstChunkGt8s, totalDurationGt25s,
             step2Success, step3Success, noDeduction, allStepsFailed,
-            modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError, modelTruncated,
+            modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError,
+            modelStrategyTruncated, modelProviderTruncated,
         };
     }
 

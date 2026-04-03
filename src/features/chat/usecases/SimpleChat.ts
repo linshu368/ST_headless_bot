@@ -506,6 +506,9 @@ export class SimpleChat {
             const TRUNCATED_FINISH_REASONS = new Set(['length', 'content_filter']);
             const providerTruncated = executionTrace.finishReason !== null
                 && TRUNCATED_FINISH_REASONS.has(executionTrace.finishReason);
+            if (providerTruncated && executionTrace.model) {
+                metrics.incrementModelProviderTruncated(executionTrace.model);
+            }
             const shouldDeduct = executionTrace.streamCompleted
                 && !providerTruncated
                 && !!this.creditsRepository;

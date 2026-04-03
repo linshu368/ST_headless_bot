@@ -43,9 +43,12 @@ const mockRaw: RawMetrics = {
     modelNetworkError: new Map([
         ['grok-3', 1],
     ]),
-    modelTruncated: new Map([
-        ['grok-3', 3],
+    modelStrategyTruncated: new Map([
+        ['grok-3', 2],
         ['claude-sonnet-4', 1],
+    ]),
+    modelProviderTruncated: new Map([
+        ['grok-3', 1],
     ]),
 };
 

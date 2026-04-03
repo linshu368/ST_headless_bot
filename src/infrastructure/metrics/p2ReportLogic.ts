@@ -38,7 +38,8 @@ export interface ModelStat {
     networkError: number;
     invisibleFailureRate: string;
     // 用户可感知
-    truncated: number;
+    strategyTruncated: number;
+    providerTruncated: number;
     visibleFailureRate: string;
 }
 
@@ -97,7 +98,8 @@ export interface RawMetrics {
     modelEmptyStream: Map<string, number>;
     modelApiError: Map<string, number>;
     modelNetworkError: Map<string, number>;
-    modelTruncated: Map<string, number>;
+    modelStrategyTruncated: Map<string, number>;
+    modelProviderTruncated: Map<string, number>;
 }
 
 // ==================== 纯函数 ====================
@@ -134,7 +136,8 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
     const {
         totalRequests, firstChunkGt8s, totalDurationGt25s,
         step2Success, step3Success, noDeduction, allStepsFailed,
-        modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError, modelTruncated,
+        modelTotalCalls, modelFirstchunkTimeout, modelEmptyStream, modelApiError, modelNetworkError,
+        modelStrategyTruncated, modelProviderTruncated,
     } = raw;
 
     // 合并所有出现过的模型名
@@ -144,7 +147,8 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
         ...modelEmptyStream.keys(),
         ...modelApiError.keys(),
         ...modelNetworkError.keys(),
-        ...modelTruncated.keys(),
+        ...modelStrategyTruncated.keys(),
+        ...modelProviderTruncated.keys(),
     ]);
 
     const fullModelStats: ModelStat[] = [...allModels].map(model => {
@@ -153,7 +157,8 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
         const empty = modelEmptyStream.get(model) || 0;
         const api = modelApiError.get(model) || 0;
         const network = modelNetworkError.get(model) || 0;
-        const trunc = modelTruncated.get(model) || 0;
+        const strategyTrunc = modelStrategyTruncated.get(model) || 0;
+        const providerTrunc = modelProviderTruncated.get(model) || 0;
         return {
             model,
             totalCalls: total,
@@ -162,8 +167,9 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
             apiError: api,
             networkError: network,
             invisibleFailureRate: rate(timeout + empty + api + network, total),
-            truncated: trunc,
-            visibleFailureRate: rate(trunc, total),
+            strategyTruncated: strategyTrunc,
+            providerTruncated: providerTrunc,
+            visibleFailureRate: rate(strategyTrunc + providerTrunc, total),
         };
     }).sort((a, b) => b.totalCalls - a.totalCalls);
 
@@ -172,7 +178,9 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
 
     // 内生逻辑 check
     const totalModelCalls = [...modelTotalCalls.values()].reduce((s, v) => s + v, 0);
-    const totalTruncated = [...modelTruncated.values()].reduce((s, v) => s + v, 0);
+    const totalStrategyTruncated = [...modelStrategyTruncated.values()].reduce((s, v) => s + v, 0);
+    const totalProviderTruncated = [...modelProviderTruncated.values()].reduce((s, v) => s + v, 0);
+    const totalAllTruncated = totalStrategyTruncated + totalProviderTruncated;
     const expectedModelCalls = totalRequests + step2Success + 2 * step3Success + 2 * allStepsFailed;
 
     const consistencyChecks: ConsistencyCheck[] = [
@@ -184,11 +192,11 @@ export function computeReport(raw: RawMetrics, hours: number, now: Date = new Da
             passed: totalModelCalls === expectedModelCalls,
         },
         {
-            name: '没扣积分 >= 截断 + 全部失败',
-            formula: `${noDeduction} >= ${totalTruncated} + ${allStepsFailed}`,
+            name: '没扣积分 >= 策略截断 + 供应商截断 + 全部失败',
+            formula: `${noDeduction} >= ${totalStrategyTruncated} + ${totalProviderTruncated} + ${allStepsFailed}`,
             left: noDeduction,
-            right: totalTruncated + allStepsFailed,
-            passed: noDeduction >= totalTruncated + allStepsFailed,
+            right: totalAllTruncated + allStepsFailed,
+            passed: noDeduction >= totalAllTruncated + allStepsFailed,
         },
     ];
 
@@ -273,7 +281,7 @@ export function buildCard(data: P2ReportData): object {
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
                 `📦 **${m.model}**\u3000\u3000调用 ${m.totalCalls}`,
                 `╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌`,
-                `\u3000\u3000🔴 用户可感知\u3000\u3000截断 ${m.truncated}\u3000\u3000失败率 ${m.visibleFailureRate}`,
+                `\u3000\u3000🔴 用户可感知\u3000\u3000策略截断 ${m.strategyTruncated} · 供应商截断 ${m.providerTruncated}\u3000\u3000失败率 ${m.visibleFailureRate}`,
                 `\u3000\u3000⚪ 用户不可感知\u3000超时 ${m.firstchunkTimeout} · 空流 ${m.emptyStream} · API报错 ${m.apiError} · 网络 ${m.networkError}\u3000\u3000失败率 ${m.invisibleFailureRate}`,
             );
         }
