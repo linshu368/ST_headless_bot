@@ -24,6 +24,8 @@ import type { InternalPaymentEvent } from '../../types/payment.js';
 import { SupabasePaymentOrderRepository } from '../../infrastructure/repositories/SupabasePaymentOrderRepository.js';
 import { feishuAlert, AlertType } from '../../infrastructure/alerts/FeishuAlertService.js';
 import { metrics } from '../../infrastructure/metrics/MetricsCollector.js';
+import { CheckinUseCase } from '../checkin/usecases/CheckinUseCase.js';
+import { SupabaseCheckinRepository } from '../../infrastructure/repositories/SupabaseCheckinRepository.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -42,6 +44,7 @@ export class TelegramBotAdapter {
     private userRepository: SupabaseUserRepository;
     private creditsRepository: SupabaseCreditRepository | null;
     private rechargeUseCase: RechargeUseCase | null;
+    private checkinUseCase: CheckinUseCase;
     private internalHttpServer: Server | null = null;
     private isPolling: boolean = false;
     private processedMessageIds: Set<number> = new Set();
@@ -106,6 +109,9 @@ export class TelegramBotAdapter {
         this.rechargeUseCase = config.payment.enabled
             ? new RechargeUseCase(creditsRepository, undefined, this.paymentOrderRepo)
             : null;
+
+        // 初始化签到用例
+        this.checkinUseCase = new CheckinUseCase(new SupabaseCheckinRepository());
     }
 
     /**
@@ -287,6 +293,9 @@ export class TelegramBotAdapter {
                 return;
             } else if (text === '💰 充值') {
                 await this._handleRechargeMenu(chatId);
+                return;
+            } else if (text === '📅 每日签到') {
+                await this._handleCheckin(chatId);
                 return;
             } else if (text === '🎭 选择角色' || text === '🗂 历史聊天') {
                  if (text === '🎭 选择角色') {
@@ -549,6 +558,23 @@ export class TelegramBotAdapter {
             disable_web_page_preview: true, // Disable preview for first message to avoid double previews
             reply_markup: UIHandler.createMainMenuKeyboard()
         });
+    }
+
+    private async _handleCheckin(chatId: string): Promise<void> {
+        try {
+            const result = await this.checkinUseCase.checkin(chatId);
+
+            if (result.success) {
+                await this.bot.sendMessage(chatId, `✅ 今日签到成功！获得 ${result.reward} 星尘 ✨`);
+            } else if (result.reason === 'cooldown') {
+                await this.bot.sendMessage(chatId, `📅 今日已签到过啦，请在 ${result.remaining} 后再来~`);
+            } else {
+                await this.bot.sendMessage(chatId, '😵 系统开小差啦~请稍后重试');
+            }
+        } catch (error) {
+            logger.error({ kind: 'biz', component: COMPONENT, message: 'Checkin handler error', error, meta: { chatId } });
+            await this.bot.sendMessage(chatId, '😵 系统开小差啦~请稍后重试');
+        }
     }
 
     private async _handleCustomerService(chatId: string): Promise<void> {

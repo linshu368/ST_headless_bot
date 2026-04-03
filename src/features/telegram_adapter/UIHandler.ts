@@ -7,7 +7,7 @@ export class UIHandler {
             keyboard: [
                 [{ text: "🎭 选择角色" }, { text: "💰 充值" }],
                 [{ text: "🗂 历史聊天" },{ text: "👤 个人中心" }],
-                [{ text: "☎️ 客服&售后" }]
+                [{ text: "📅 每日签到" }, { text: "☎️ 客服&售后" }]
             ],
             resize_keyboard: true
         };
