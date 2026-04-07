@@ -16,7 +16,7 @@ import {
     CHECKIN_COOLDOWN_MS,
 } from '../rules/checkinRules.js';
 import { CheckinUseCase } from '../usecases/CheckinUseCase.js';
-import type { ICheckinRepository, CheckinOperationResult } from '../ports/ICheckinRepository.js';
+import type { ICheckinRepository, CheckinOperationResult, CheckinLogEntry } from '../ports/ICheckinRepository.js';
 
 // ============================================================
 // Test Runner
@@ -159,6 +159,10 @@ class MockCheckinRepo implements ICheckinRepository {
         this.performCheckinCalled = true;
         return this.performCheckinResult;
     }
+
+    async getCheckinHistory(_userId: string, _limit?: number): Promise<CheckinLogEntry[]> {
+        return [];
+    }
 }
 
 class FailingCheckinRepo implements ICheckinRepository {
@@ -168,6 +172,10 @@ class FailingCheckinRepo implements ICheckinRepository {
 
     async performCheckin(_userId: string, _reward: number): Promise<CheckinOperationResult> {
         return { success: false, reason: 'system_error' };
+    }
+
+    async getCheckinHistory(_userId: string, _limit?: number): Promise<CheckinLogEntry[]> {
+        return [];
     }
 }
 

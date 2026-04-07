@@ -11,6 +11,12 @@ export interface CheckinOperationResult {
     reason?: 'cooldown' | 'system_error';
 }
 
+/** 签到流水明细（来自 checkin_logs 表） */
+export interface CheckinLogEntry {
+    reward: number;
+    checkedInAt: Date;
+}
+
 export interface ICheckinRepository {
     /**
      * 查询用户最后一次签到时间
@@ -19,10 +25,18 @@ export interface ICheckinRepository {
     getLastCheckinTime(userId: string): Promise<Date | null | undefined>;
 
     /**
-     * 原子化签到：在数据库事务中检查冷却 + 更新签到时间 + 发放 bonus 积分
+     * 原子化签到：在数据库事务中检查冷却 + 更新签到时间 + 发放 bonus 积分 + 写入流水
      * 由 DB 层 RPC 保证并发安全
      * @param userId 用户 ID
      * @param reward 发放的 bonus_credits 数量
      */
     performCheckin(userId: string, reward: number): Promise<CheckinOperationResult>;
+
+    /**
+     * 查询用户签到历史流水
+     * @param userId 用户 ID
+     * @param limit 返回条数，默认 30
+     * @returns 签到记录数组（按时间倒序）；异常时返回空数组
+     */
+    getCheckinHistory(userId: string, limit?: number): Promise<CheckinLogEntry[]>;
 }

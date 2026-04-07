@@ -1,5 +1,5 @@
 import { supabase } from '../supabase/SupabaseClient.js';
-import type { ICheckinRepository, CheckinOperationResult } from '../../features/checkin/ports/ICheckinRepository.js';
+import type { ICheckinRepository, CheckinOperationResult, CheckinLogEntry } from '../../features/checkin/ports/ICheckinRepository.js';
 import { logger } from '../../platform/logger.js';
 
 const COMPONENT = 'SupabaseCheckinRepo';
@@ -53,8 +53,8 @@ export class SupabaseCheckinRepository implements ICheckinRepository {
      * RPC 预期行为：
      * 1. 检查 last_checkin_at 距 now() 是否 >= 24h
      * 2. 若冷却中 → 返回 { success: false, reason: 'cooldown' }
-     * 3. 若可签到 → UPDATE last_checkin_at = now(), bonus_credits += p_reward
-     *    → 返回 { success: true }
+     * 3. 若可签到 → UPDATE last_checkin_at = now(), bonus_credits += p_reward,
+     *    INSERT checkin_logs 流水 → 返回 { success: true }
      */
     async performCheckin(userId: string, reward: number): Promise<CheckinOperationResult> {
         if (!supabase) {
@@ -108,6 +108,43 @@ export class SupabaseCheckinRepository implements ICheckinRepository {
                 meta: { userId, reward },
             });
             return { success: false, reason: 'system_error' };
+        }
+    }
+
+    async getCheckinHistory(userId: string, limit: number = 30): Promise<CheckinLogEntry[]> {
+        if (!supabase) return [];
+
+        try {
+            const { data, error } = await supabase
+                .from('checkin_logs')
+                .select('reward, checked_in_at')
+                .eq('user_id', userId)
+                .order('checked_in_at', { ascending: false })
+                .limit(limit);
+
+            if (error) {
+                logger.warn({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'Failed to query checkin_logs',
+                    meta: { userId, error: error.message },
+                });
+                return [];
+            }
+
+            return (data ?? []).map(row => ({
+                reward: row.reward,
+                checkedInAt: new Date(row.checked_in_at),
+            }));
+        } catch (err) {
+            logger.error({
+                kind: 'infra',
+                component: COMPONENT,
+                message: 'Exception querying checkin_logs',
+                error: err,
+                meta: { userId },
+            });
+            return [];
         }
     }
 }
