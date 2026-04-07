@@ -20,6 +20,10 @@ export enum AlertType {
     HISTORY_SAVE_FAILURE    = 'HISTORY_SAVE_FAILURE',
     CREDIT_DEPOSIT_FAILURE  = 'CREDIT_DEPOSIT_FAILURE',
 
+    // P1 — 降级观察（瞬态网络错误，尚未确认服务不可用）
+    SUPABASE_DEGRADED       = 'SUPABASE_DEGRADED',
+    REDIS_DEGRADED          = 'REDIS_DEGRADED',
+
     UNKNOWN                 = 'UNKNOWN',
 }
 
@@ -36,6 +40,10 @@ const DEFAULT_TITLES: Record<AlertType, string> = {
     [AlertType.CHANNEL_CONFIG_PARSE_ERROR]: '渠道/模型配置解析失败',
     [AlertType.HISTORY_SAVE_FAILURE]:       '用户历史记录保存或回滚失败',
     [AlertType.CREDIT_DEPOSIT_FAILURE]:     '充值成功但积分未到账',
+
+    // P1 — 降级观察
+    [AlertType.SUPABASE_DEGRADED]:  'Supabase 连接不稳定（瞬态网络错误，观察中）',
+    [AlertType.REDIS_DEGRADED]:     'Redis 连接不稳定（瞬态网络错误，观察中）',
 
     [AlertType.UNKNOWN]:                    '未分类告警',
 };

@@ -1,25 +1,8 @@
 import { feishuAlert, AlertType } from './alerts/FeishuAlertService.js';
 import { logger } from '../platform/logger.js';
+import { isTransientNetworkError } from './utils/networkErrors.js';
 
 const COMPONENT = 'GlobalErrorHandler';
-
-const TRANSIENT_NETWORK_PATTERNS = [
-    'ETIMEDOUT',
-    'ECONNRESET',
-    'ECONNREFUSED',
-    'ENOTFOUND',
-    'EAI_AGAIN',
-    'socket disconnected',
-    'socket hang up',
-    'EFATAL',
-];
-
-function isTransientNetworkError(err: unknown): boolean {
-    const msg = err instanceof Error
-        ? `${err.name} ${err.message} ${err.stack ?? ''}`
-        : String(err);
-    return TRANSIENT_NETWORK_PATTERNS.some(p => msg.includes(p));
-}
 
 export function setupGlobalErrorHandlers() {
     process.on('uncaughtException', (error: Error) => {

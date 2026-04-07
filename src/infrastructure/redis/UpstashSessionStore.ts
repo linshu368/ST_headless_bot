@@ -1,6 +1,7 @@
 import { logger } from '../../platform/logger.js';
 import type { SessionMessage, SessionStore } from '../../core/ports/SessionStore.js';
 import { feishuAlert, AlertType } from '../alerts/FeishuAlertService.js';
+import { isTransientNetworkError } from '../utils/networkErrors.js';
 
 type UpstashResponse = {
     result?: unknown;
@@ -18,9 +19,19 @@ export class UpstashSessionStore implements SessionStore {
     private historyRetentionCount: number;
     private readonly debugEnabled: boolean;
 
+    // --- Redis 连接健康度跟踪 ---
     private consecutiveFailures = 0;
-    private readonly FAILURE_THRESHOLD = 5;
+    private transientFailureCount = 0;
     private connectionLostAlerted = false;
+    private degradedAlerted = false;
+    private probeInFlight = false;
+
+    /** 非瞬态错误连续失败阈值（保持原有灵敏度） */
+    private readonly FAILURE_THRESHOLD = 5;
+    /** 瞬态网络错误连续失败阈值（降噪） */
+    private readonly TRANSIENT_FAILURE_THRESHOLD = 10;
+    /** 主动探活超时 */
+    private readonly PROBE_TIMEOUT_MS = 5_000;
 
     constructor(params: {
         restUrl: string;
@@ -59,7 +70,6 @@ export class UpstashSessionStore implements SessionStore {
      */
     setMaxHistoryItems(max: number): void {
         this.maxHistoryItems = Math.max(1, max);
-        // historyRetentionCount 不超过 maxHistoryItems
         if (this.historyRetentionCount > this.maxHistoryItems) {
             this.historyRetentionCount = this.maxHistoryItems;
         }
@@ -113,6 +123,114 @@ export class UpstashSessionStore implements SessionStore {
         return encodeURIComponent(value);
     }
 
+    // =============================================
+    // Redis 连接健康度 — 两级升级 + 探活
+    // =============================================
+
+    /**
+     * 每次 cmd() 失败后调用（fire-and-forget 触发异步探活）。
+     */
+    private checkConnectionHealth(error: unknown, command: string): void {
+        const allTransient = this.transientFailureCount === this.consecutiveFailures;
+        const threshold = allTransient ? this.TRANSIENT_FAILURE_THRESHOLD : this.FAILURE_THRESHOLD;
+
+        // —— 第一级：在原 P0 阈值处，若全是瞬态错误，降级为 P1 观察 ——
+        if (allTransient
+            && this.consecutiveFailures === this.FAILURE_THRESHOLD
+            && !this.degradedAlerted) {
+            this.degradedAlerted = true;
+            feishuAlert.sendP1({
+                alertType: AlertType.REDIS_DEGRADED,
+                message: `Redis 连续 ${this.consecutiveFailures} 次请求失败（全部为瞬态网络错误），持续观察中。如持续到 ${this.TRANSIENT_FAILURE_THRESHOLD} 次将升级为 P0。`,
+                error,
+                meta: {
+                    consecutiveFailures: this.consecutiveFailures,
+                    transientCount: this.transientFailureCount,
+                    lastCommand: command,
+                },
+            });
+        }
+
+        // —— 第二级：达到阈值，准备发 P0（瞬态错误先探活确认） ——
+        if (this.consecutiveFailures >= threshold && !this.connectionLostAlerted && !this.probeInFlight) {
+            this.probeInFlight = true;
+            this.triggerConnectionLostAlert(allTransient, error, command)
+                .catch(e => {
+                    logger.error({ kind: 'sys', component: COMPONENT, message: 'Error in triggerConnectionLostAlert', error: e });
+                })
+                .finally(() => {
+                    this.probeInFlight = false;
+                });
+        }
+    }
+
+    /**
+     * 达到告警阈值时调用。
+     * 如果全是瞬态网络错误，先主动探活；探活成功则判定为抖动，不发 P0。
+     */
+    private async triggerConnectionLostAlert(allTransient: boolean, error: unknown, command: string): Promise<void> {
+        if (this.connectionLostAlerted) return;
+
+        if (allTransient) {
+            const probeOk = await this.probeRedis();
+
+            // 探活期间可能已经恢复（某次 cmd 成功重置了计数器）
+            if (this.consecutiveFailures === 0) return;
+
+            if (probeOk) {
+                logger.warn({
+                    kind: 'sys',
+                    component: COMPONENT,
+                    message: `Redis 连续 ${this.consecutiveFailures} 次请求失败（瞬态网络错误），但主动探活成功，判定为网络抖动，不发送 P0`,
+                });
+                this.resetFailureCounters();
+                return;
+            }
+        }
+
+        // 探活也失败，或包含非瞬态错误 → 确认连接断开，发 P0
+        this.connectionLostAlerted = true;
+        feishuAlert.sendP0({
+            alertType: AlertType.REDIS_CONNECTION_LOST,
+            message: `Redis (Upstash) 连续 ${this.consecutiveFailures} 次请求失败，${allTransient ? '主动探活也失败，' : '包含非瞬态错误，'}判定连接断开`,
+            error,
+            meta: {
+                consecutiveFailures: this.consecutiveFailures,
+                transientCount: this.transientFailureCount,
+                allTransient,
+                lastCommand: command,
+            },
+        });
+    }
+
+    /**
+     * 主动探活：向 Upstash 发一个 PING，验证是否真正不可达。
+     */
+    private async probeRedis(): Promise<boolean> {
+        return new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => resolve(false), this.PROBE_TIMEOUT_MS);
+            fetch(`${this.baseUrl}/ping`, { headers: this.headers })
+                .then((response) => {
+                    clearTimeout(timer);
+                    resolve(response.ok);
+                })
+                .catch(() => {
+                    clearTimeout(timer);
+                    resolve(false);
+                });
+        });
+    }
+
+    /**
+     * 重置连接健康度计数器（探活成功 / 恢复正常时调用）。
+     */
+    private resetFailureCounters(): void {
+        this.consecutiveFailures = 0;
+        this.transientFailureCount = 0;
+        this.degradedAlerted = false;
+        // 注意：connectionLostAlerted 仅在 cmd() 真正成功时才重置
+    }
+
     private async cmd(...args: string[]): Promise<UpstashResponse> {
         if (args.length === 0) {
             throw new Error('Upstash cmd requires at least one argument');
@@ -159,23 +277,21 @@ export class UpstashSessionStore implements SessionStore {
                 throw new Error(String(data.error));
             }
 
-            this.consecutiveFailures = 0;
+            // ---- 请求成功，重置健康度计数 ----
+            if (this.consecutiveFailures > 0) {
+                this.resetFailureCounters();
+            }
             if (this.connectionLostAlerted) {
                 this.connectionLostAlerted = false;
-                logger.info({ kind: 'sys', component: COMPONENT, message: 'Redis connection recovered' });
+                logger.info({ kind: 'sys', component: COMPONENT, message: 'Redis connection recovered (P0 cleared)' });
             }
             return data;
         } catch (error) {
             this.consecutiveFailures++;
-            if (this.consecutiveFailures >= this.FAILURE_THRESHOLD && !this.connectionLostAlerted) {
-                this.connectionLostAlerted = true;
-                feishuAlert.sendP0({
-                    alertType: AlertType.REDIS_CONNECTION_LOST,
-                    message: `Redis (Upstash) 连续 ${this.consecutiveFailures} 次请求失败，判定连接断开`,
-                    error,
-                    meta: { consecutiveFailures: this.consecutiveFailures, lastCommand: command },
-                });
+            if (isTransientNetworkError(error)) {
+                this.transientFailureCount++;
             }
+            this.checkConnectionHealth(error, command);
             throw error;
         }
     }

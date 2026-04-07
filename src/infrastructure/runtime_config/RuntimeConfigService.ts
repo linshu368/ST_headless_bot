@@ -18,6 +18,7 @@ import type { CreditsPlan } from '../../types/payment.js';
 import { RuntimeConfigSchema } from './RuntimeConfigSchema.js';
 import type { StreamScheduleConfig } from '../../features/chat/rules/streamingSchedule.js';
 import { feishuAlert, AlertType } from '../alerts/FeishuAlertService.js';
+import { isTransientNetworkError } from '../utils/networkErrors.js';
 
 const COMPONENT = 'RuntimeConfig';
 const REDIS_KEY_PREFIX = 'runtime_config';
@@ -112,9 +113,18 @@ export class RuntimeConfigService {
     private refreshTimer: NodeJS.Timeout | null = null;
     private refreshInFlight = false;
 
+    // --- Supabase 连接健康度跟踪 ---
     private supabaseConsecutiveFailures = 0;
-    private readonly SUPABASE_FAILURE_THRESHOLD = 3;
+    private supabaseTransientFailureCount = 0;
     private supabaseConnectionLostAlerted = false;
+    private supabaseDegradedAlerted = false;
+
+    /** 非瞬态错误连续失败阈值（保持原有灵敏度） */
+    private readonly SUPABASE_FAILURE_THRESHOLD = 3;
+    /** 瞬态网络错误连续失败阈值（~10 分钟 @ 60s/周期，降噪） */
+    private readonly SUPABASE_TRANSIENT_THRESHOLD = 10;
+    /** 主动探活超时 */
+    private readonly PROBE_TIMEOUT_MS = 5_000;
 
     private constructor() {
         this.baseUrl = (config.redis.restUrl || '').replace(/\/+$/, '');
@@ -271,23 +281,121 @@ export class RuntimeConfigService {
         this.refreshTimer = setInterval(() => {
             this.refreshAllToRedis().catch(() => {});
         }, REFRESH_INTERVAL_MS);
-        // Allow the process to exit even if this timer is still active.
-        // Critical for short-lived CLI scripts (e.g. ops/git hooks) that
-        // import RuntimeConfigService but should not be kept alive by it.
         this.refreshTimer.unref();
     }
 
-    private _checkSupabaseConnectionLost(error: unknown): void {
-        if (this.supabaseConsecutiveFailures >= this.SUPABASE_FAILURE_THRESHOLD
-            && !this.supabaseConnectionLostAlerted) {
-            this.supabaseConnectionLostAlerted = true;
-            feishuAlert.sendP0({
-                alertType: AlertType.SUPABASE_CONNECTION_LOST,
-                message: `Supabase 定时刷新连续 ${this.supabaseConsecutiveFailures} 个周期失败（~${this.supabaseConsecutiveFailures} 分钟），判定连接断开`,
+    // =============================================
+    // Private: Supabase 连接健康度 — 两级升级 + 探活
+    // =============================================
+
+    /**
+     * 每次 Supabase 刷新失败后调用。
+     * 区分瞬态网络抖动与真正的服务不可用，实施两级升级策略。
+     */
+    private async _handleSupabaseFailure(error: unknown): Promise<void> {
+        if (isTransientNetworkError(error)) {
+            this.supabaseTransientFailureCount++;
+        }
+
+        const allTransient = this.supabaseTransientFailureCount === this.supabaseConsecutiveFailures;
+        const threshold = allTransient ? this.SUPABASE_TRANSIENT_THRESHOLD : this.SUPABASE_FAILURE_THRESHOLD;
+
+        // —— 第一级：在原 P0 阈值处，若全是瞬态错误，降级为 P1 观察 ——
+        if (allTransient
+            && this.supabaseConsecutiveFailures === this.SUPABASE_FAILURE_THRESHOLD
+            && !this.supabaseDegradedAlerted) {
+            this.supabaseDegradedAlerted = true;
+            feishuAlert.sendP1({
+                alertType: AlertType.SUPABASE_DEGRADED,
+                message: `Supabase 刷新已连续失败 ${this.supabaseConsecutiveFailures} 次（全部为瞬态网络错误），持续观察中。如持续到 ${this.SUPABASE_TRANSIENT_THRESHOLD} 次将升级为 P0。`,
                 error,
-                meta: { consecutiveFailures: this.supabaseConsecutiveFailures },
+                meta: {
+                    consecutiveFailures: this.supabaseConsecutiveFailures,
+                    transientCount: this.supabaseTransientFailureCount,
+                },
             });
         }
+
+        // —— 第二级：达到阈值，准备发 P0（瞬态错误先探活确认） ——
+        if (this.supabaseConsecutiveFailures >= threshold && !this.supabaseConnectionLostAlerted) {
+            await this._triggerSupabaseConnectionLostAlert(allTransient, error);
+        }
+    }
+
+    /**
+     * 达到告警阈值时调用。
+     * 如果全是瞬态网络错误，先主动探活；探活成功则判定为抖动，不发 P0。
+     */
+    private async _triggerSupabaseConnectionLostAlert(allTransient: boolean, error: unknown): Promise<void> {
+        if (this.supabaseConnectionLostAlerted) return;
+
+        if (allTransient) {
+            const probeOk = await this.probeSupabase();
+
+            // 探活期间可能已经恢复（refreshAllToRedis 成功重置了计数器）
+            if (this.supabaseConsecutiveFailures === 0) return;
+
+            if (probeOk) {
+                logger.warn({
+                    kind: 'sys',
+                    component: COMPONENT,
+                    message: `Supabase 连续 ${this.supabaseConsecutiveFailures} 次刷新失败（瞬态网络错误），但主动探活成功，判定为网络抖动，不发送 P0`,
+                });
+                this.resetSupabaseFailureCounters();
+                return;
+            }
+        }
+
+        // 探活也失败，或包含非瞬态错误 → 确认连接断开，发 P0
+        this.supabaseConnectionLostAlerted = true;
+        feishuAlert.sendP0({
+            alertType: AlertType.SUPABASE_CONNECTION_LOST,
+            message: `Supabase 定时刷新连续 ${this.supabaseConsecutiveFailures} 个周期失败，${allTransient ? '主动探活也失败，' : '包含非瞬态错误，'}判定连接断开`,
+            error,
+            meta: {
+                consecutiveFailures: this.supabaseConsecutiveFailures,
+                transientCount: this.supabaseTransientFailureCount,
+                allTransient,
+            },
+        });
+    }
+
+    /**
+     * 主动探活：向 Supabase 发一个轻量查询，验证是否真正不可达。
+     */
+    private async probeSupabase(): Promise<boolean> {
+        const client = supabase;
+        if (!client) return false;
+
+        const probe = async () => {
+            try {
+                const { error } = await client
+                    .from('runtime_config')
+                    .select('key')
+                    .limit(1);
+                return !error;
+            } catch {
+                return false;
+            }
+        };
+
+        return new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => resolve(false), this.PROBE_TIMEOUT_MS);
+            probe().then((ok) => {
+                clearTimeout(timer);
+                resolve(ok);
+            });
+        });
+    }
+
+    /**
+     * 重置 Supabase 连接健康度计数器（探活成功 / 恢复正常时调用）。
+     */
+    private resetSupabaseFailureCounters(): void {
+        this.supabaseConsecutiveFailures = 0;
+        this.supabaseTransientFailureCount = 0;
+        this.supabaseDegradedAlerted = false;
+        // 注意：supabaseConnectionLostAlerted 仅在刷新真正成功时才重置
     }
 
     private async refreshAllToRedis(): Promise<void> {
@@ -303,7 +411,7 @@ export class RuntimeConfigService {
 
             if (error) {
                 this.supabaseConsecutiveFailures++;
-                this._checkSupabaseConnectionLost(new Error(error.message));
+                await this._handleSupabaseFailure(new Error(error.message));
                 logger.warn({
                     kind: 'infra',
                     component: COMPONENT,
@@ -322,9 +430,13 @@ export class RuntimeConfigService {
                 return;
             }
 
-            this.supabaseConsecutiveFailures = 0;
+            // ---- 刷新成功，重置所有健康度计数 ----
+            const wasDegraded = this.supabaseConsecutiveFailures > 0;
+            this.resetSupabaseFailureCounters();
             if (this.supabaseConnectionLostAlerted) {
                 this.supabaseConnectionLostAlerted = false;
+                logger.info({ kind: 'sys', component: COMPONENT, message: 'Supabase connection recovered (P0 cleared)' });
+            } else if (wasDegraded) {
                 logger.info({ kind: 'sys', component: COMPONENT, message: 'Supabase connection recovered' });
             }
 
@@ -371,7 +483,7 @@ export class RuntimeConfigService {
             });
         } catch (error) {
             this.supabaseConsecutiveFailures++;
-            this._checkSupabaseConnectionLost(error);
+            await this._handleSupabaseFailure(error);
             logger.warn({
                 kind: 'infra',
                 component: COMPONENT,
@@ -447,7 +559,7 @@ export class RuntimeConfigService {
 • 点击 [🗂 历史聊天] 可浏览和恢复存档
 
 👤 **个人中心**
-• 点击“👤个人中心” 可切换AI模型
+• 点击"👤个人中心" 可切换AI模型
 
 💡 更多功能开发中，敬请期待...`;
         return this.get<string>('customer_service_message', fallback);
@@ -524,7 +636,6 @@ export class RuntimeConfigService {
     private async redisSetEx(key: string, value: string, ttlSeconds: number): Promise<void> {
         const redisKey = `${REDIS_KEY_PREFIX}:${key}`;
 
-        // Use Upstash REST API command format: POST body as JSON array
         const response = await fetch(this.baseUrl, {
             method: 'POST',
             headers: this.headers,
