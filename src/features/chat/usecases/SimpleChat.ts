@@ -185,6 +185,7 @@ export class SimpleChat {
         isFirst: boolean;
         isFinal: boolean;
         firstResponseMs?: number;
+        truncated?: boolean;
     }> {
         const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Streaming chat started' });
@@ -227,6 +228,7 @@ export class SimpleChat {
         isFirst: boolean;
         isFinal: boolean;
         firstResponseMs?: number;
+        truncated?: boolean;
     }> {
         const processingStartTime = Date.now();
         logger.info({ kind: 'biz', component: COMPONENT, message: 'Regenerating chat started' });
@@ -283,6 +285,7 @@ export class SimpleChat {
         isFirst: boolean;
         isFinal: boolean;
         firstResponseMs?: number;
+        truncated?: boolean;
     }> {
         // [New] Capture history snapshot BEFORE generation
         const historySnapshot = JSON.stringify(session.history);
@@ -455,12 +458,18 @@ export class SimpleChat {
             throw error;
         }
 
+        const TRUNCATED_FINISH_REASONS = new Set(['length', 'content_filter']);
+        const providerTruncated = executionTrace.finishReason !== null
+            && TRUNCATED_FINISH_REASONS.has(executionTrace.finishReason);
+        const wasTruncated = !executionTrace.streamCompleted || providerTruncated;
+
         if (accumulatedText && accumulatedText !== lastSentText) {
             yield {
                 text: accumulatedText,
                 isFirst: false,
                 isFinal: true,
-                firstResponseMs
+                firstResponseMs,
+                truncated: wasTruncated,
             };
             lastSentText = accumulatedText;
         } else if (accumulatedText) {
@@ -468,7 +477,8 @@ export class SimpleChat {
                 text: accumulatedText,
                 isFirst: false,
                 isFinal: true,
-                firstResponseMs
+                firstResponseMs,
+                truncated: wasTruncated,
             };
         }
 
@@ -503,9 +513,6 @@ export class SimpleChat {
                 return 'bonus_credits';
             };
 
-            const TRUNCATED_FINISH_REASONS = new Set(['length', 'content_filter']);
-            const providerTruncated = executionTrace.finishReason !== null
-                && TRUNCATED_FINISH_REASONS.has(executionTrace.finishReason);
             if (providerTruncated && executionTrace.model) {
                 metrics.incrementModelProviderTruncated(executionTrace.model);
             }

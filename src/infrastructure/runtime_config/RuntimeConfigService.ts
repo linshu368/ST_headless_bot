@@ -545,6 +545,11 @@ export class RuntimeConfigService {
         return this.get<string>('insufficient_credits_message', '星尘不足啦，唤醒更多星尘，让故事继续......');
     }
 
+    /** 获取生成截断提示文案 */
+    async getTruncationTipMessage(): Promise<string> {
+        return this.get<string>('truncation_tip_message', '生成中断，✨ 本次操作已免除星尘消耗。');
+    }
+
     /** 获取客服帮助文案 */
     async getCustomerServiceMessage(): Promise<string> {
         const fallback = `❓ **帮助中心**
@@ -719,7 +724,7 @@ export class RuntimeConfigService {
             };
         }
 
-        if (key === 'system_instructions' || key === 'welcome_message' || key === 'customer_service_message' || key === 'insufficient_credits_message' || key.startsWith('payment_')) {
+        if (key === 'system_instructions' || key === 'welcome_message' || key === 'customer_service_message' || key === 'insufficient_credits_message' || key === 'truncation_tip_message' || key.startsWith('payment_')) {
             const text = typeof value === 'string' ? value : '';
             return {
                 length: text.length,

@@ -343,6 +343,7 @@ export class TelegramBotAdapter {
                 timer.mark('placeholder_sent');
                 let lastText = '';
                 let isFirstEdit = true;
+                let wasTruncated = false;
 
                 for await (const update of this.simpleChat.streamChat(chatId, text, timer)) {
                     const sanitizedText = this._sanitizeBotReply(update.text || '');
@@ -362,6 +363,10 @@ export class TelegramBotAdapter {
                             meta: { waterfall: timer.toWaterfall(), chatId }
                         });
                         isFirstEdit = false;
+                    }
+
+                    if (update.isFinal && update.truncated) {
+                        wasTruncated = true;
                     }
 
                     lastText = sanitizedText;
@@ -388,6 +393,11 @@ export class TelegramBotAdapter {
                         message_id: placeholder.message_id,
                         reply_markup: UIHandler.createRegenerateKeyboard(placeholder.message_id)
                     });
+
+                    if (wasTruncated) {
+                        const tipMsg = await runtimeConfig.getTruncationTipMessage();
+                        await this.bot.sendMessage(msg.chat.id, tipMsg);
+                    }
                 }
 
             } catch (error) {
@@ -779,6 +789,7 @@ export class TelegramBotAdapter {
                     // 2. 发送新消息 Placeholder
                     const placeholder = await this.bot.sendMessage(chatId, '✍️ 重新生成中...');
                     let lastText = '';
+                    let wasTruncated = false;
                     const startTime = Date.now();
 
                     try {
@@ -791,6 +802,11 @@ export class TelegramBotAdapter {
                                 chat_id: chatId,
                                 message_id: placeholder.message_id
                             });
+
+                            if (update.isFinal && update.truncated) {
+                                wasTruncated = true;
+                            }
+
                             lastText = sanitizedText;
                         }
 
@@ -806,6 +822,11 @@ export class TelegramBotAdapter {
                                 message_id: placeholder.message_id,
                                 reply_markup: UIHandler.createRegenerateKeyboard(placeholder.message_id)
                             });
+
+                            if (wasTruncated) {
+                                const tipMsg = await runtimeConfig.getTruncationTipMessage();
+                                await this.bot.sendMessage(chatId, tipMsg);
+                            }
                         }
                     } catch (error) {
                          if (error instanceof InsufficientCreditsError) {
