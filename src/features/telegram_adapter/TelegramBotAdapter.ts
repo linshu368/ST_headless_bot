@@ -26,6 +26,7 @@ import { feishuAlert, AlertType } from '../../infrastructure/alerts/FeishuAlertS
 import { metrics } from '../../infrastructure/metrics/MetricsCollector.js';
 import { CheckinUseCase } from '../checkin/usecases/CheckinUseCase.js';
 import { SupabaseCheckinRepository } from '../../infrastructure/repositories/SupabaseCheckinRepository.js';
+import { MAX_CUSTOM_INSTRUCTIONS_LENGTH } from '../chat/domain/UserPreferences.js';
 
 const COMPONENT = 'TelegramBot';
 
@@ -297,6 +298,9 @@ export class TelegramBotAdapter {
             } else if (text === '📅 每日签到') {
                 await this._handleCheckin(chatId);
                 return;
+            } else if (text === '⚙️ 偏好设置') {
+                await this._handlePreferencesMenu(chatId);
+                return;
             } else if (text === '🎭 选择角色' || text === '🗂 历史聊天') {
                  if (text === '🎭 选择角色') {
                      await this._handleRoleSelection(chatId);
@@ -306,10 +310,18 @@ export class TelegramBotAdapter {
                  return;
             }
 
-            // 3. 状态机拦截 (快照命名)
+            // 3. 状态机拦截
             const userState = this.userStates.get(chatId);
             if (userState === 'awaiting_snapshot_name') {
                 await this._handleSnapshotNaming(chatId, text);
+                return;
+            }
+            if (userState === 'awaiting_custom_instructions_append') {
+                await this._handleCustomInstructionsInput(chatId, text, 'append');
+                return;
+            }
+            if (userState === 'awaiting_custom_instructions_replace') {
+                await this._handleCustomInstructionsInput(chatId, text, 'replace');
                 return;
             }
 
@@ -592,6 +604,84 @@ export class TelegramBotAdapter {
         await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
     }
 
+    // =============================================
+    // 偏好设置
+    // =============================================
+
+    private async _handlePreferencesMenu(chatId: string, messageIdToEdit?: number): Promise<void> {
+        const currentMode = await this.sessionManager.getUserModelMode(chatId);
+        const modeText = this._getModelDisplayName(currentMode);
+        const text = `⚙️ **偏好设置**\n\n当前文本模型：**${modeText}**`;
+
+        if (messageIdToEdit) {
+            await this.bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageIdToEdit,
+                parse_mode: 'Markdown',
+                reply_markup: UIHandler.createPreferencesKeyboard(),
+            });
+        } else {
+            await this.bot.sendMessage(chatId, text, {
+                parse_mode: 'Markdown',
+                reply_markup: UIHandler.createPreferencesKeyboard(),
+            });
+        }
+    }
+
+    private async _handleCustomInstructionsView(chatId: string, messageIdToEdit?: number): Promise<void> {
+        const [ciDesc, ciPrefs] = await Promise.all([
+            runtimeConfig.getPreferenceDescription('custom_instructions'),
+            this.sessionManager.getUserPreferences(chatId),
+        ]);
+        const ciDisplay = ciPrefs.custom_instructions?.trim() || '暂无';
+        const ciText = `${ciDesc || '✏️ 自定义指令'}\n------------------\n当前指令：\n${ciDisplay}`;
+
+        if (messageIdToEdit) {
+            await this.bot.editMessageText(ciText, {
+                chat_id: chatId,
+                message_id: messageIdToEdit,
+                parse_mode: 'Markdown',
+                reply_markup: UIHandler.createCustomInstructionsKeyboard(),
+            });
+        } else {
+            await this.bot.sendMessage(chatId, ciText, {
+                parse_mode: 'Markdown',
+                reply_markup: UIHandler.createCustomInstructionsKeyboard(),
+            });
+        }
+    }
+
+    private async _handleCustomInstructionsInput(chatId: string, text: string, mode: 'append' | 'replace'): Promise<void> {
+        this.userStates.delete(chatId);
+
+        const currentPrefs = await this.sessionManager.getUserPreferences(chatId);
+
+        let newValue: string;
+        if (mode === 'append') {
+            const existing = currentPrefs.custom_instructions?.trim();
+            newValue = (existing && existing !== '暂无')
+                ? `${existing}\n${text.trim()}`
+                : text.trim();
+        } else {
+            newValue = text.trim();
+        }
+
+        if (newValue.length > MAX_CUSTOM_INSTRUCTIONS_LENGTH) {
+            await this.bot.sendMessage(
+                chatId,
+                `⚠️ 指令内容超出上限（最多 ${MAX_CUSTOM_INSTRUCTIONS_LENGTH} 字，当前 ${newValue.length} 字），请精简后重试。`,
+                { reply_markup: UIHandler.createCustomInstructionsKeyboard() },
+            );
+            return;
+        }
+
+        await this.sessionManager.updateUserPreference(chatId, 'custom_instructions', newValue);
+
+        const confirmText = mode === 'append' ? '✅ 指令已追加' : '✅ 指令已更新';
+        await this.bot.sendMessage(chatId, confirmText);
+        await this._handleCustomInstructionsView(chatId);
+    }
+
     private async _handleListSnapshots(chatId: string): Promise<void> {
         const snapshots = await this.sessionManager.getSnapshots(chatId);
         
@@ -670,30 +760,21 @@ export class TelegramBotAdapter {
     }
 
     private async _handlePersonalCenter(chatId: string): Promise<void> {
-        const [currentMode, creditBalance] = await Promise.all([
-            this.sessionManager.getUserModelMode(chatId),
-            this.creditsRepository?.getBalance(chatId).catch(() => null) ?? Promise.resolve(null),
-        ]);
+        const creditBalance = await this.creditsRepository?.getBalance(chatId).catch(() => null) ?? null;
         
-        let modeText = "🎦 旗舰模型 (默认)";
-        if (currentMode === ModelTier.TIER_1) modeText = "🍔 快餐模型";
-        if (currentMode === ModelTier.TIER_2) modeText = "📖 基础模型";
-        if (currentMode === ModelTier.TIER_3) modeText = "🎦 旗舰模型";
-        if (currentMode === ModelTier.TIER_4) modeText = "💎 尊享模型";
-
         const totalCredits = creditBalance
             ? getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits)
             : null;
         const balanceText = totalCredits === null ? '当前拥有星尘：--' : `当前拥有星尘：${totalCredits}`;
-        const text = ` **👤 个人中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
+        const text = `👤 **个人中心**\n\n${balanceText}`;
         
         await this.bot.sendMessage(chatId, text, {
             parse_mode: 'Markdown',
-            reply_markup: UIHandler.createSettingsKeyboard(currentMode)
+            reply_markup: UIHandler.createSettingsKeyboard()
         });
     }
 
-    private async _handleModelSelection(chatId: string, previousMessageId?: number): Promise<void> {
+    private async _handleModelSelection(chatId: string, previousMessageId?: number, source: 'settings' | 'pref' = 'settings'): Promise<void> {
         if (!supabase) {
             await this.bot.sendMessage(chatId, "⚠️ 系统配置错误：Supabase 未连接，无法加载图片。");
             return;
@@ -715,7 +796,7 @@ export class TelegramBotAdapter {
         await this.bot.sendPhoto(chatId, imageUrl, {
             caption: caption,
             parse_mode: 'Markdown', // Ensure caption uses Markdown if needed, though caption entities are usually auto-detected or simple text.
-            reply_markup: UIHandler.createModelSelectionKeyboard(currentMode)
+            reply_markup: UIHandler.createModelSelectionKeyboard(currentMode, source)
         });
     }
 
@@ -747,33 +828,120 @@ export class TelegramBotAdapter {
                 case 'settings_main':
                     await this._updatePersonalCenterMessage(query);
                     break;
-                
-                case 'settings_model_select':
-                    await this._handleModelSelection(chatId, query.message?.message_id);
+
+                case 'close_settings':
+                    await this.bot.deleteMessage(chatId, query.message?.message_id!);
                     break;
 
-                case 'set_mode':
+                // ========== 偏好设置回调 ==========
+                case 'pref_model_select':
+                    await this._handleModelSelection(chatId, query.message?.message_id, 'pref');
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'pref_set_mode': {
                     const newMode = params[0];
                     await this.sessionManager.setUserModelMode(chatId, newMode);
                     await this.bot.answerCallbackQuery(query.id, { text: `✅ 已切换为：${this._getModelDisplayName(newMode)}` });
                     
-                    // Delete the photo message and return to settings
+                    // Delete the photo message and return to preferences
                     if (query.message?.message_id) {
                         await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
                     }
-                    await this._handlePersonalCenter(chatId);
+                    await this._handlePreferencesMenu(chatId);
                     break;
+                }
 
-                case 'settings_back_from_model':
-                    // Delete the photo message and return to settings
+                case 'pref_back_from_model':
                     if (query.message?.message_id) {
                         await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
                     }
-                    await this._handlePersonalCenter(chatId);
+                    await this._handlePreferencesMenu(chatId);
                     break;
 
-                case 'close_settings':
-                    await this.bot.deleteMessage(chatId, query.message?.message_id!);
+                case 'pref_word_count': {
+                    const [wcDesc, wcPrefs, wcTiers] = await Promise.all([
+                        runtimeConfig.getPreferenceDescription('word_count'),
+                        this.sessionManager.getUserPreferences(chatId),
+                        runtimeConfig.getWordCountTiers(),
+                    ]);
+                    const wcText = wcDesc || '📝 选择你希望的回复字数范围：';
+                    await this.bot.editMessageText(wcText, {
+                        chat_id: chatId,
+                        message_id: query.message?.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: UIHandler.createWordCountKeyboard(wcPrefs.word_count, wcTiers),
+                    });
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+                }
+
+                case 'pref_set_word_count': {
+                    const newWordCount = params[0];
+                    await this.sessionManager.updateUserPreference(chatId, 'word_count', newWordCount);
+                    await this.bot.answerCallbackQuery(query.id, { text: `✅ 字数已设为：${newWordCount}` });
+                    await this._handlePreferencesMenu(chatId, query.message?.message_id);
+                    break;
+                }
+
+                case 'pref_options': {
+                    const [optDesc, optPrefs] = await Promise.all([
+                        runtimeConfig.getPreferenceDescription('options'),
+                        this.sessionManager.getUserPreferences(chatId),
+                    ]);
+                    const optText = optDesc || '🎯 选择是否在回复末尾生成行动选项：';
+                    await this.bot.editMessageText(optText, {
+                        chat_id: chatId,
+                        message_id: query.message?.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: UIHandler.createShowOptionsKeyboard(optPrefs.show_options),
+                    });
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+                }
+
+                case 'pref_set_options': {
+                    const optionValue = params[0] === 'true';
+                    await this.sessionManager.updateUserPreference(chatId, 'show_options', optionValue);
+                    await this.bot.answerCallbackQuery(query.id, { text: optionValue ? '✅ 已开启选项' : '✅ 已关闭选项' });
+                    await this._handlePreferencesMenu(chatId, query.message?.message_id);
+                    break;
+                }
+
+                case 'pref_custom_instructions':
+                    await this._handleCustomInstructionsView(chatId, query.message?.message_id);
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'pref_ci_append':
+                    this.userStates.set(chatId, 'awaiting_custom_instructions_append');
+                    await this.bot.editMessageText('请输入你想补充的偏好，发送后会追加到当前指令中。', {
+                        chat_id: chatId,
+                        message_id: query.message?.message_id,
+                        reply_markup: UIHandler.createCustomInstructionsInputKeyboard(),
+                    });
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'pref_ci_replace':
+                    this.userStates.set(chatId, 'awaiting_custom_instructions_replace');
+                    await this.bot.editMessageText('请输入新的完整指令，发送后会替换当前所有内容。', {
+                        chat_id: chatId,
+                        message_id: query.message?.message_id,
+                        reply_markup: UIHandler.createCustomInstructionsInputKeyboard(),
+                    });
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'pref_ci_back':
+                    this.userStates.delete(chatId);
+                    await this._handleCustomInstructionsView(chatId, query.message?.message_id);
+                    await this.bot.answerCallbackQuery(query.id);
+                    break;
+
+                case 'pref_back':
+                    await this._handlePreferencesMenu(chatId, query.message?.message_id);
+                    await this.bot.answerCallbackQuery(query.id);
                     break;
 
                 case 'regenerate':
@@ -988,25 +1156,18 @@ export class TelegramBotAdapter {
         const chatId = query.message?.chat.id.toString();
         if (!chatId) return;
 
-        const currentMode = await this.sessionManager.getUserModelMode(chatId);
-        let modeText = "🎦 旗舰模型 (默认)";
-        if (currentMode === ModelTier.TIER_1) modeText = "🍔 快餐模型";
-        if (currentMode === ModelTier.TIER_2) modeText = "📖 基础模型";
-        if (currentMode === ModelTier.TIER_3) modeText = "🎦 旗舰模型";
-        if (currentMode === ModelTier.TIER_4) modeText = "💎 尊享模型";
-
         const creditBalance = await this.creditsRepository?.getBalance(chatId).catch(() => null) ?? null;
         const totalCredits = creditBalance
             ? getTotalBalance(creditBalance.mainCredits, creditBalance.bonusCredits)
             : null;
         const balanceText = totalCredits === null ? '当前拥有星尘：--' : `当前拥有星尘：${totalCredits}`;
-        const text = `👤 **个人中心**\n\n当前模型：**${modeText}**\n${balanceText}`;
+        const text = `👤 **个人中心**\n\n${balanceText}`;
 
         await this.bot.editMessageText(text, {
             chat_id: chatId,
             message_id: query.message?.message_id,
             parse_mode: 'Markdown',
-            reply_markup: UIHandler.createSettingsKeyboard(currentMode)
+            reply_markup: UIHandler.createSettingsKeyboard()
         });
     }
 
