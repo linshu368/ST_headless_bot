@@ -1,10 +1,11 @@
 import { supabase } from '../supabase/SupabaseClient.js';
 import { logger } from '../../platform/logger.js';
+import type { UserPreferences } from '../../features/chat/domain/UserPreferences.js';
 
 const COMPONENT = 'SupabaseUserRepository';
 
 export interface TelegramUserUpsert {
-    userId: string; // telegram chatId as string (current system user_id)
+    userId: string;
     username?: string | null;
     firstName?: string | null;
     lastName?: string | null;
@@ -111,5 +112,51 @@ export class SupabaseUserRepository {
             logger.error({ kind: 'infra', component: COMPONENT, message: 'Exception during total_round increment', error, meta: { userId } });
         }
     }
-}
 
+    /**
+     * 将用户偏好持久化到 bot_users 表（三个独立字段）。
+     * 
+     * 调用时机：用户通过 Telegram UI 修改偏好后，fire-and-forget 写入。
+     * 运行时不从此表读取——Redis 是运行时唯一数据源。
+     */
+    async updatePreferences(userId: string, preferences: UserPreferences): Promise<void> {
+        if (!supabase) return;
+
+        try {
+            const { error } = await supabase
+                .from('bot_users')
+                .update({
+                    pref_word_count: preferences.word_count,
+                    pref_show_options: preferences.show_options,
+                    pref_custom_instructions: preferences.custom_instructions || null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('user_id', userId);
+
+            if (error) {
+                logger.error({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'Failed to update user preferences',
+                    error,
+                    meta: { userId },
+                });
+            } else {
+                logger.debug({
+                    kind: 'infra',
+                    component: COMPONENT,
+                    message: 'User preferences persisted to bot_users',
+                    meta: { userId, word_count: preferences.word_count, show_options: preferences.show_options },
+                });
+            }
+        } catch (error) {
+            logger.error({
+                kind: 'infra',
+                component: COMPONENT,
+                message: 'Exception during preferences update',
+                error,
+                meta: { userId },
+            });
+        }
+    }
+}

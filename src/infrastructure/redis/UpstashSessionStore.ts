@@ -327,21 +327,27 @@ export class UpstashSessionStore implements SessionStore {
         if (raw === null || raw === undefined || raw === '' || raw === 'null') {
             return null;
         }
-        if (typeof raw === 'string') {
-            const tryParse = (value: string): unknown => {
-                try {
-                    return JSON.parse(value);
-                } catch {
-                    return value;
-                }
-            };
-            let parsed = tryParse(raw);
-            if (typeof parsed === 'string') {
-                parsed = tryParse(parsed);
+        
+        const tryParse = (val: string): unknown => {
+            try {
+                return JSON.parse(val);
+            } catch {
+                return val;
             }
-            return this.unwrapResult(parsed);
+        };
+
+        // Recursively unwrap and parse to handle double-encoded JSON and nested value/result objects
+        let current: unknown = raw;
+        let previous: unknown = null;
+        while (current !== previous) {
+            previous = current;
+            if (typeof current === 'string') {
+                current = tryParse(current);
+            }
+            current = this.unwrapResult(current);
         }
-        return this.unwrapResult(raw);
+
+        return current;
     }
 
     async getMessages(sessionId: string): Promise<SessionMessage[]> {

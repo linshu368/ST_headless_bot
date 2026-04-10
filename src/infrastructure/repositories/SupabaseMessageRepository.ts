@@ -42,6 +42,7 @@ export class SupabaseMessageRepository implements IMessageRepository {
                     accept_at: record.accept_at || null,
                     credits_deducted: record.credits_deducted ?? 0,
                     credits_account: record.credits_account ?? null,
+                    user_preferences: record.user_preferences || null,
                 })
                 .select('id')
                 .single();
