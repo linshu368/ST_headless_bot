@@ -1,6 +1,11 @@
 import type { AIChannelConfig, TierMappingConfig } from '../../types/config.js';
 import type { CreditsPlan } from '../../types/payment.js';
 import type { AIConfigSourceData } from './RuntimeConfigService.js';
+import type {
+    WordCountTiersConfig,
+    WordCountTier,
+    InteractionModeBlocks,
+} from '../../features/chat/domain/UserPreferences.js';
 
 export interface RuntimeConfigMeta {
     version: number | null;
@@ -43,8 +48,6 @@ const requireTextValue = (key: string, textValue: string | null | undefined): st
     if (typeof textValue === 'string' && textValue.length > 0) {
         return textValue;
     }
-    // 允许空字符串吗？根据业务，有些配置可能不能为空。
-    // 如果必须非空：
     throw new Error(`RuntimeConfigSchema: ${key} must be a non-empty string in 'text_value' column`);
 };
 
@@ -114,7 +117,6 @@ const parseAIConfigSource = (value: unknown, key: string): AIConfigSourceData =>
         tier_mapping[tier] = requireString(`tier_mapping.${tier}`, channelId, key);
     }
 
-    // tier_costs: optional Record<string, number>, fallback handled by caller
     let tier_costs: Record<string, number> | undefined;
     const costsRaw = value.tier_costs;
     if (costsRaw !== undefined && costsRaw !== null) {
@@ -125,7 +127,6 @@ const parseAIConfigSource = (value: unknown, key: string): AIConfigSourceData =>
         for (const [tier, cost] of Object.entries(costsRaw)) {
             tier_costs[tier] = parseNumber(`tier_costs.${tier}`, cost, key);
         }
-        // Cross-validation: every tier in tier_mapping must have a cost entry
         for (const tier of Object.keys(tier_mapping)) {
             if (!(tier in tier_costs)) {
                 throw new Error(`RuntimeConfigSchema: ${key}.tier_costs missing entry for "${tier}"`);
@@ -150,6 +151,57 @@ const parseCreditsPlans = (value: unknown, key: string): CreditsPlan[] => {
     });
 };
 
+// =============================================
+// [New] User Preferences Config Parsers
+// =============================================
+
+const parseWordCountTiers = (value: unknown, key: string): WordCountTiersConfig => {
+    if (!isRecord(value)) {
+        throw new Error(`RuntimeConfigSchema: ${key} must be an object`);
+    }
+
+    const tiersRaw = value.tiers;
+    if (!Array.isArray(tiersRaw) || tiersRaw.length === 0) {
+        throw new Error(`RuntimeConfigSchema: ${key}.tiers must be a non-empty array`);
+    }
+
+    const tiers: WordCountTier[] = tiersRaw.map((tierRaw, idx) => {
+        if (!isRecord(tierRaw)) {
+            throw new Error(`RuntimeConfigSchema: ${key}.tiers[${idx}] must be an object`);
+        }
+        const label = requireString('label', tierRaw.label, `${key}.tiers[${idx}]`);
+        const prompt_value = requireString('prompt_value', tierRaw.prompt_value, `${key}.tiers[${idx}]`);
+        return { label, prompt_value };
+    });
+
+    const default_value = requireString('default_value', value.default_value, key);
+
+    // Cross-validation: default_value must match one of the tiers' prompt_value
+    const validValues = new Set(tiers.map(t => t.prompt_value));
+    if (!validValues.has(default_value)) {
+        throw new Error(
+            `RuntimeConfigSchema: ${key}.default_value "${default_value}" does not match any tier prompt_value`
+        );
+    }
+
+    return { tiers, default_value };
+};
+
+const parseInteractionModeBlocks = (value: unknown, key: string): InteractionModeBlocks => {
+    if (!isRecord(value)) {
+        throw new Error(`RuntimeConfigSchema: ${key} must be an object`);
+    }
+
+    const options_on = requireString('options_on', value.options_on, key);
+    const options_off = requireString('options_off', value.options_off, key);
+
+    return { options_on, options_off };
+};
+
+// =============================================
+// Schema Entry Point
+// =============================================
+
 export const RuntimeConfigSchema = {
     parse<T = unknown>(input: RuntimeConfigRowInput): RuntimeConfigRowParsed<T> {
         const version = parseVersion(input.version);
@@ -157,7 +209,6 @@ export const RuntimeConfigSchema = {
 
         switch (input.key) {
             case 'ai_config_source': {
-                // 复杂对象仍然只从 value 解析
                 const value = parseAIConfigSource(input.value, input.key);
                 return { key: input.key, value: value as T, version, updated_at };
             }
@@ -192,9 +243,22 @@ export const RuntimeConfigSchema = {
             case 'payment_order_expired':
             case 'payment_order_pending':
             case 'payment_order_failed':
-            case 'payment_success': {
+            case 'payment_success':
+            case 'pref_word_count_desc':
+            case 'pref_options_desc':
+            case 'pref_custom_instructions_desc': {
                 // 纯文本配置（含模板占位符）：只读 text_value
                 const value = requireTextValue(input.key, input.text_value);
+                return { key: input.key, value: value as T, version, updated_at };
+            }
+            // [New] 字数档位配置：JSON from value column
+            case 'pref_word_count_tiers': {
+                const value = parseWordCountTiers(input.value, input.key);
+                return { key: input.key, value: value as T, version, updated_at };
+            }
+            // [New] 选项模式指令块：JSON from value column
+            case 'interaction_mode_blocks': {
+                const value = parseInteractionModeBlocks(input.value, input.key);
                 return { key: input.key, value: value as T, version, updated_at };
             }
             default: {

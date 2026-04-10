@@ -19,6 +19,15 @@ import { RuntimeConfigSchema } from './RuntimeConfigSchema.js';
 import type { StreamScheduleConfig } from '../../features/chat/rules/streamingSchedule.js';
 import { feishuAlert, AlertType } from '../alerts/FeishuAlertService.js';
 import { isTransientNetworkError } from '../utils/networkErrors.js';
+import type {
+    WordCountTiersConfig,
+    InteractionModeBlocks,
+} from '../../features/chat/domain/UserPreferences.js';
+import {
+    DEFAULT_WORD_COUNT_TIERS_CONFIG,
+    DEFAULT_INTERACTION_MODE_BLOCKS,
+} from '../../features/chat/domain/UserPreferences.js';
+
 
 const COMPONENT = 'RuntimeConfig';
 const REDIS_KEY_PREFIX = 'runtime_config';
@@ -613,6 +622,34 @@ export class RuntimeConfigService {
         return this.get<CreditsPlan[]>('payment_credits_plans', config.payment.creditsPlans);
     }
 
+
+    // =============================================
+    // Public: User Preferences Config
+    // =============================================
+
+    /** 获取字数档位配置（label + prompt_value 映射 + 默认值） */
+    async getWordCountTiers(): Promise<WordCountTiersConfig> {
+        return this.get<WordCountTiersConfig>('pref_word_count_tiers', DEFAULT_WORD_COUNT_TIERS_CONFIG);
+    }
+
+    /** 获取选项模式指令块 */
+    async getInteractionModeBlocks(): Promise<InteractionModeBlocks> {
+        return this.get<InteractionModeBlocks>('interaction_mode_blocks', DEFAULT_INTERACTION_MODE_BLOCKS);
+    }
+
+    /**
+     * 获取偏好设置说明文案（纯 UI 展示，不在生成热路径调用）
+     * @param key 'word_count' | 'options' | 'custom_instructions'
+     */
+    async getPreferenceDescription(key: 'word_count' | 'options' | 'custom_instructions'): Promise<string> {
+        const configKeyMap: Record<string, string> = {
+            word_count: 'pref_word_count_desc',
+            options: 'pref_options_desc',
+            custom_instructions: 'pref_custom_instructions_desc',
+        };
+        return this.get<string>(configKeyMap[key], '');
+    }
+
     // =============================================
     // Private: Redis Operations (Upstash REST API)
     // =============================================
@@ -724,7 +761,26 @@ export class RuntimeConfigService {
             };
         }
 
-        if (key === 'system_instructions' || key === 'welcome_message' || key === 'customer_service_message' || key === 'insufficient_credits_message' || key === 'truncation_tip_message' || key.startsWith('payment_')) {
+        // [New] 字数档位配置：摘要展示档位数量和默认值
+        if (key === 'pref_word_count_tiers' && value && typeof value === 'object') {
+            const tiers = value as WordCountTiersConfig;
+            return {
+                tierCount: tiers.tiers?.length ?? 0,
+                defaultValue: tiers.default_value,
+                labels: tiers.tiers?.map(t => t.label) ?? [],
+            };
+        }
+
+        // [New] 选项模式指令块：摘要展示各块长度
+        if (key === 'interaction_mode_blocks' && value && typeof value === 'object') {
+            const blocks = value as InteractionModeBlocks;
+            return {
+                options_on_length: blocks.options_on?.length ?? 0,
+                options_off_length: blocks.options_off?.length ?? 0,
+            };
+        }
+
+        if (key === 'system_instructions' || key === 'welcome_message' || key === 'customer_service_message' || key === 'insufficient_credits_message' || key === 'truncation_tip_message' || key.startsWith('payment_') || key.startsWith('pref_') && key.endsWith('_desc')) {
             const text = typeof value === 'string' ? value : '';
             return {
                 length: text.length,

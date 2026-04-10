@@ -4,6 +4,7 @@ import {
     createInitialStreamScheduleState,
     type StreamScheduleConfig,
 } from '../rules/streamingSchedule.js';
+import { renderSystemInstructions } from '../rules/renderSystemInstructions.js';
 import { logger } from '../../../platform/logger.js';
 import config from '../../../platform/config.js';
 import type { RequestTimer } from '../../../platform/RequestTimer.js';
@@ -347,9 +348,20 @@ export class SimpleChat {
             }
         }
 
-        // Parallel: loadContext + all config lookups + credit balance
-        // (was 6+ sequential Redis calls → 1 parallel round; credit query 搭车, 零增量延迟)
-        const [, userMode, aiConfigSource, systemInstructions, interChunkMs, streamScheduleConfig, creditBalance] = await Promise.all([
+        
+        // Added: getUserPreferences, getInteractionModeBlocks, getWordCountTiers (3 extra Redis GETs, masked by parallel execution)
+        const [
+            ,
+            userMode,
+            aiConfigSource,
+            systemInstructionsTemplate,     
+            interChunkMs,
+            streamScheduleConfig,
+            creditBalance,
+            userPreferences,                
+            interactionModeBlocks,          
+            wordCountTiers,                 
+        ] = await Promise.all([
             session.engine.loadContext({
                 characters: [session.character],
                 chat: engineContext
@@ -360,6 +372,9 @@ export class SimpleChat {
             config.timeouts.interChunk,
             runtimeConfig.getStreamScheduleConfig(),
             this.creditsRepository?.getBalance(userId).catch(() => null) ?? Promise.resolve(null),
+            this.sessionManager.getUserPreferences(userId),     
+            runtimeConfig.getInteractionModeBlocks(),           
+            runtimeConfig.getWordCountTiers(),                  
         ]);
         timer?.mark('context_loaded');
         logger.debug({
@@ -367,6 +382,19 @@ export class SimpleChat {
             component: COMPONENT,
             message: 'Stream timeout config resolved',
             meta: { interChunkMs, streamScheduleConfig, source: 'runtime_config' },
+        });
+
+
+        logger.debug({
+            kind: 'biz',
+            component: COMPONENT,
+            message: 'User preferences resolved',
+            meta: {
+                userId,
+                wordCount: userPreferences.word_count,
+                showOptions: userPreferences.show_options,
+                hasCustomInstructions: userPreferences.custom_instructions !== '暂无' && userPreferences.custom_instructions !== '',
+            },
         });
 
         // Credit pre-check: creditBalance === null 表示积分系统不可用 → 放行
@@ -400,7 +428,20 @@ export class SimpleChat {
             const channel = new PipelineChannel(channelId, steps);
 
             const targetTurn = (session.turnCount || 0) + 1;
-            enhancedInput = this._buildEnhancedPrompt(userInput, systemInstructions);
+
+ 
+            const activeInteractionBlock = userPreferences.show_options
+                ? interactionModeBlocks.options_on
+                : interactionModeBlocks.options_off;
+
+            const renderedInstructions = renderSystemInstructions(
+                systemInstructionsTemplate,
+                userPreferences,
+                activeInteractionBlock,
+                wordCountTiers,
+            );
+
+            enhancedInput = this._buildEnhancedPrompt(userInput, renderedInstructions);
 
             timer?.mark('channel_resolved');
             logger.info({ 
@@ -522,6 +563,12 @@ export class SimpleChat {
             const deductTier = resolveTierFromMode(userMode);
             const deductCost = getCostForTier(deductTier, aiConfigSource.tier_costs);
 
+            const preferencesSnapshot = {
+                word_count: userPreferences.word_count,
+                show_options: userPreferences.show_options,
+                custom_instructions: userPreferences.custom_instructions,
+            };
+
             this.messageRepository.saveMessage({
                 user_id: userId,
                 role_id: session.character?.extensions?.role_id || null,
@@ -540,6 +587,7 @@ export class SimpleChat {
                 accept_at: new Date(processingStartTime).toISOString(),
                 credits_deducted: 0,
                 credits_account: null,
+                user_preferences: preferencesSnapshot, 
             }).then(messageId => {
                 // [Step1] Diagnose backfill guard: log when any required field is missing
                 if (!messageId || !executionTrace.generation_id || !executionTrace.apiKey) {

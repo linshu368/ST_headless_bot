@@ -2,6 +2,9 @@ import { logger } from '../../platform/logger.js';
 import type { SessionMessage, SessionStore } from '../../core/ports/SessionStore.js';
 import { feishuAlert, AlertType } from '../alerts/FeishuAlertService.js';
 import { isTransientNetworkError } from '../utils/networkErrors.js';
+import type { UserPreferences } from '../../features/chat/domain/UserPreferences.js';
+import { DEFAULT_USER_PREFERENCES } from '../../features/chat/domain/UserPreferences.js';
+
 
 type UpstashResponse = {
     result?: unknown;
@@ -117,6 +120,10 @@ export class UpstashSessionStore implements SessionStore {
 
     private keyLastActive(userId: string): string {
         return `${this.namespace}:user_active:${userId}`;
+    }
+
+    private keyUserPreferences(userId: string): string {
+        return `${this.namespace}:user_pref:${userId}:preferences`;
     }
 
     private encode(value: string): string {
@@ -562,5 +569,84 @@ export class UpstashSessionStore implements SessionStore {
     async setLastActiveTime(userId: string, timestamp: number): Promise<void> {
         const key = this.keyLastActive(userId);
         await this.cmd('set', key, String(timestamp));
+    }
+
+
+    // =============================================
+    // User Preferences
+    // =============================================
+    /**
+     * 获取用户偏好
+     * 
+     * 校验策略：只做结构级校验（字段存在性、类型），不做业务级校验
+     * （如 word_count 是否在当前合法档位中）。业务校验由上层在拿到
+     * runtimeConfig.getWordCountTiers() 后通过 resolveWordCount() 执行。
+     */
+    async getUserPreferences(userId: string): Promise<UserPreferences> {
+        const key = this.keyUserPreferences(userId);
+        try {
+            const result = await this.cmd('get', key);
+            const value = this.decodeGetResult(result);
+
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const obj = value as Record<string, unknown>;
+                return {
+                    word_count: typeof obj.word_count === 'string' && obj.word_count.length > 0
+                        ? obj.word_count
+                        : DEFAULT_USER_PREFERENCES.word_count,
+                    show_options: typeof obj.show_options === 'boolean'
+                        ? obj.show_options
+                        : DEFAULT_USER_PREFERENCES.show_options,
+                    custom_instructions: typeof obj.custom_instructions === 'string'
+                        ? obj.custom_instructions
+                        : DEFAULT_USER_PREFERENCES.custom_instructions,
+                };
+            }
+
+            return { ...DEFAULT_USER_PREFERENCES };
+        } catch {
+            return { ...DEFAULT_USER_PREFERENCES };
+        }
+    }
+
+    /**
+     * 整体覆写用户偏好
+     */
+    async setUserPreferences(userId: string, prefs: UserPreferences): Promise<void> {
+        const key = this.keyUserPreferences(userId);
+        await this.cmd('set', key, JSON.stringify(prefs));
+    }
+
+    /**
+     * 单字段更新用户偏好（Telegram UI 场景：用户只改了字数或只改了选项开关）
+     * 读 → 改 → 写，返回更新后的完整偏好对象
+     */
+    async updateUserPreference(
+        userId: string,
+        field: keyof UserPreferences,
+        value: string | boolean,
+    ): Promise<UserPreferences> {
+        const current = await this.getUserPreferences(userId);
+
+        switch (field) {
+            case 'word_count':
+                if (typeof value === 'string') {
+                    current.word_count = value;
+                }
+                break;
+            case 'show_options':
+                if (typeof value === 'boolean') {
+                    current.show_options = value;
+                }
+                break;
+            case 'custom_instructions':
+                if (typeof value === 'string') {
+                    current.custom_instructions = value;
+                }
+                break;
+        }
+
+        await this.setUserPreferences(userId, current);
+        return current;
     }
 }

@@ -19,5 +19,7 @@ export interface MessageLogRecord {
     accept_at?: string; // ISO 8601 – when the bot received the user message
     credits_deducted?: number | null; // >0: amount deducted, 0: skipped, null: deduction failed
     credits_account?: CreditAccount | null; // which account was charged; null when deduction failed or skipped
+    /** [Step5c] New field: Snapshot of user preferences at the time of message */
+    user_preferences?: any;
     // id and created_at are handled by DB
 }

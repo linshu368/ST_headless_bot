@@ -1,3 +1,4 @@
+import type { UserPreferences } from '../../features/chat/domain/UserPreferences.js';
 export type SessionMessage = {
     role: 'user' | 'assistant' | 'system';
     content: string;
@@ -22,4 +23,14 @@ export interface SessionStore {
     /** User-level last active timestamp (ms) for session expiry */
     getLastActiveTime(userId: string): Promise<number | null>;
     setLastActiveTime(userId: string, timestamp: number): Promise<void>;
+
+    /** 获取用户偏好（不存在则返回默认值） */
+    getUserPreferences(userId: string): Promise<UserPreferences>;
+
+    /** 整体覆写用户偏好 */
+    setUserPreferences(userId: string, prefs: UserPreferences): Promise<void>;
+
+    /** 单字段更新用户偏好，返回更新后的完整偏好对象 */
+    updateUserPreference(userId: string, field: keyof UserPreferences, value: string | boolean): Promise<UserPreferences>;
+
 }

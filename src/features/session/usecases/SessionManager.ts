@@ -13,6 +13,8 @@ import { mapDbRowToCharacterV2, type RoleDataRow } from '../../../infrastructure
 import { supabase } from '../../../infrastructure/supabase/SupabaseClient.js';
 import { runtimeConfig } from '../../../infrastructure/runtime_config/RuntimeConfigService.js';
 import { feishuAlert, AlertType } from '../../../infrastructure/alerts/FeishuAlertService.js';
+import type { UserPreferences } from '../../../features/chat/domain/UserPreferences.js';
+import { DEFAULT_USER_PREFERENCES } from '../../../features/chat/domain/UserPreferences.js';
 
 const COMPONENT = 'SessionManager';
 
@@ -540,6 +542,40 @@ export class SessionManager {
             await this.sessionStore.setUserModelMode(userId, mode as 'tier_1' | 'tier_2' | 'tier_3' | 'tier_4');
         } catch (error) {
             logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to set user model mode', error });
+        }
+    }
+
+
+    // =============================================
+    // User Preferences (delegate to SessionStore)
+    // =============================================
+
+    async getUserPreferences(userId: string): Promise<UserPreferences> {
+        if (!this.sessionStore) return { ...DEFAULT_USER_PREFERENCES };
+        try {
+            return await this.sessionStore.getUserPreferences(userId);
+        } catch (error) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to get user preferences', error });
+            return { ...DEFAULT_USER_PREFERENCES };
+        }
+    }
+
+    async setUserPreferences(userId: string, prefs: UserPreferences): Promise<void> {
+        if (!this.sessionStore) return;
+        try {
+            await this.sessionStore.setUserPreferences(userId, prefs);
+        } catch (error) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to set user preferences', error });
+        }
+    }
+
+    async updateUserPreference(userId: string, field: keyof UserPreferences, value: string | boolean): Promise<UserPreferences> {
+        if (!this.sessionStore) return { ...DEFAULT_USER_PREFERENCES };
+        try {
+            return await this.sessionStore.updateUserPreference(userId, field, value);
+        } catch (error) {
+            logger.warn({ kind: 'biz', component: COMPONENT, message: 'Failed to update user preference', error, meta: { field } });
+            return { ...DEFAULT_USER_PREFERENCES };
         }
     }
 
